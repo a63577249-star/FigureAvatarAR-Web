@@ -150,10 +150,12 @@
 <style>
   #figure-avatar-ar-quicklook { position: fixed; z-index: 10000; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 10px; padding: 9px 15px 9px 9px; border-radius: 999px; background: #fff; color: #172033; box-shadow: 0 3px 16px #0006; font: 600 15px system-ui, sans-serif; text-decoration: none; }
   #figure-avatar-ar-quicklook img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; }
+  #figure-avatar-ar-placement-hint { position: fixed; z-index: 9999; right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 66px); width: min(270px, 72vw); box-sizing: border-box; padding: 9px 12px; border-radius: 12px; background: #172033e8; color: #fff; box-shadow: 0 2px 12px #0005; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; }
 </style>
 <a id="figure-avatar-ar-quicklook" rel="ar" href="./AR/FigureAvatarAR.usdz" aria-label="モデルをARで配置する">
   <img src="./AR/FigureAvatarAR-preview.png" alt=""><span>ARで配置</span>
 </a>
+<div id="figure-avatar-ar-placement-hint">AR画面で床面をタップして場所を指定。ドラッグで移動、2本指でサイズを調整できます。</div>
 
 </body>
 </html>

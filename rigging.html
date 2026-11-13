@@ -58,7 +58,9 @@
       <section class="group">
         <h2>2. ボーンの位置を調整</h2>
         <div id="bone-list"></div>
-        <p class="hint">関節を選び、3Dモデル上の中心位置をタップします。ドラッグで視点を回し、2本指で拡大縮小できます。仮配置を使った場合も各関節を確認してください。</p>
+        <label class="hint" for="bone-depth">表面から内側へ <output id="bone-depth-value">3%</output></label>
+        <input id="bone-depth" type="range" min="0" max="12" value="3" step="0.5">
+        <p class="hint">関節を選び、モデル表面の関節位置をタップします。点は表面法線に沿って内側へ移動します。深さは上のスライダーで調整できます。ドラッグで視点を回し、2本指で拡大縮小できます。</p>
         <div class="row"><button id="place-toggle" class="secondary" disabled>位置を置く：OFF</button><button id="auto-place" class="secondary" disabled>標準位置を再配置</button></div>
       </section>
       <section class="group">

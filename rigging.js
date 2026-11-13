@@ -13,7 +13,7 @@ const BONE_DEFS = [
   ['RightElbow','右ひじ','RightUpperArm'], ['RightWrist','右手首','RightElbow'],
   ['LeftUpperLeg','左脚','hip'], ['LeftKnee','左ひざ','LeftUpperLeg'], ['LeftAnkle','左足首','LeftKnee'],
   ['RightUpperLeg','右脚','hip'], ['RightKnee','右ひざ','RightUpperLeg'], ['RightAnkle','右足首','RightKnee']
-].map(([name,label,parent]) => ({ name,label,parent,position:null,bone:null,marker:null }));
+].map(([name,label,parent]) => ({ name,label,parent,position:null,surfacePoint:null,surfaceNormal:null,bone:null,marker:null }));
 
 const SEGMENTS = [
   ['hip','supine'],['supine','chest'],['chest','neck'],['neck','head'],
@@ -32,6 +32,8 @@ const autoButton = document.querySelector('#auto-place');
 const generateButton = document.querySelector('#generate');
 const exportButton = document.querySelector('#export');
 const viewHelp = document.querySelector('#view-help');
+const boneDepth = document.querySelector('#bone-depth');
+const boneDepthValue = document.querySelector('#bone-depth-value');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#121a27');
@@ -122,7 +124,7 @@ function revokeOldModel() {
   modelRoot = null;
   modelEntries = [];
   generatedRig = null;
-  BONE_DEFS.forEach(bone => { bone.position = null; bone.bone = null; bone.marker = null; });
+  BONE_DEFS.forEach(bone => { bone.position = null; bone.surfacePoint=null; bone.surfaceNormal=null; bone.bone = null; bone.marker = null; });
   exportButton.disabled = true;
   setRigEditingEnabled(false);
   renderBoneList();
@@ -229,7 +231,11 @@ function placeStandardRig() {
   const h = Math.max(size.y,0.001), w = Math.max(size.x,0.001);
   const y = ratio => box.min.y + h*ratio;
   const x = ratio => center.x + w*ratio;
-  const at = (name, px, py, pz= center.z) => boneByName(name).position = new THREE.Vector3(px,py,pz);
+  const at = (name, px, py, pz= center.z) => {
+    const bone=boneByName(name);
+    bone.position=new THREE.Vector3(px,py,pz);
+    bone.surfacePoint=null;bone.surfaceNormal=null;
+  };
   at('hip',center.x,y(.48)); at('supine',center.x,y(.61)); at('chest',center.x,y(.73)); at('neck',center.x,y(.85)); at('head',center.x,y(.94));
   for (const [side,prefix] of [[1,'Left'],[-1,'Right']]) {
     at(prefix+'Shoulder',x(side*.17),y(.77));
@@ -291,7 +297,15 @@ function pickSurface(clientX,clientY) {
   pointer.set(((clientX-rect.left)/rect.width)*2-1, -((clientY-rect.top)/rect.height)*2+1);
   raycaster.setFromCamera(pointer,camera);
   const hits = raycaster.intersectObjects(modelEntries.map(entry => entry.generated || entry.mesh),true);
-  return hits.length ? hits[0].point : null;
+  return hits.length ? hits[0] : null;
+}
+
+function positionInsideFromSurface(bone) {
+  if(!bone.surfacePoint||!bone.surfaceNormal)return;
+  const worldHeight=new THREE.Box3().setFromObject(modelRoot).getSize(new THREE.Vector3()).y;
+  const depth=worldHeight*(Number(boneDepth.value)/100);
+  const point=bone.surfacePoint.clone().addScaledVector(bone.surfaceNormal,-depth);
+  bone.position=localPoint(point);
 }
 
 renderer.domElement.addEventListener('pointerdown',event => { pointerStart={x:event.clientX,y:event.clientY,id:event.pointerId}; });
@@ -300,16 +314,27 @@ renderer.domElement.addEventListener('pointerup',event => {
   const distance=Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y);
   pointerStart=null;
   if (distance>8) return;
-  const point=pickSurface(event.clientX,event.clientY);
-  if (!point) { setStatus('モデル表面をタップしてください。'); return; }
-  boneByName(activeBoneName).position=localPoint(point);
+  const hit=pickSurface(event.clientX,event.clientY);
+  if (!hit) { setStatus('モデル表面をタップしてください。'); return; }
+  const bone=boneByName(activeBoneName);
+  bone.surfacePoint=hit.point.clone();
+  bone.surfaceNormal=hit.face
+    ? hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize()
+    : camera.getWorldDirection(new THREE.Vector3()).negate();
+  positionInsideFromSurface(bone);
   updateMarkers(); renderBoneList();
   const active=BONE_DEFS.findIndex(b=>b.name===activeBoneName);
   const next=BONE_DEFS.slice(active+1).find(b=>!b.position);
   if(next) activeBoneName=next.name;
   renderBoneList();
   const label=boneByName(activeBoneName).label;
-  setStatus(`${boneByName(BONE_DEFS[active].name).label}を配置しました。次は${label}を選択中です。`);
+  setStatus(`${boneByName(BONE_DEFS[active].name).label}を表面から内側へ配置しました。深さはスライダーで調整できます。次は${label}を選択中です。`);
+});
+
+boneDepth.addEventListener('input',()=>{
+  boneDepthValue.textContent=`${Number(boneDepth.value)}%`;
+  const bone=boneByName(activeBoneName);
+  if(bone?.surfacePoint){positionInsideFromSurface(bone);updateMarkers();}
 });
 
 placeButton.addEventListener('click',()=>{

@@ -134,6 +134,8 @@
             loadingContainer.style.display = "none";
           }
         }).then((unityInstance) => {
+window.figureAvatarUnityInstance = unityInstance;
+window.dispatchEvent(new Event('figure-avatar-unity-ready'));
                 document.querySelector("#unity-fullscreen-button").onclick = () => {
                   unityInstance.SetFullscreen(1);
                 };
@@ -146,7 +148,106 @@
       document.body.appendChild(script);
 
     </script>
-  
+  <style>
+  #figure-avatar-pose-toggle { position:fixed; z-index:10001; top:max(12px,env(safe-area-inset-top)); left:max(12px,env(safe-area-inset-left)); border:0; border-radius:12px; padding:11px 15px; background:#172033ed; color:white; box-shadow:0 3px 14px #0005; font:600 15px system-ui,sans-serif; }
+  #figure-avatar-pose-panel { position:fixed; z-index:10001; top:58px; left:max(12px,env(safe-area-inset-left)); width:min(330px,calc(100vw - 24px)); max-height:calc(100dvh - 92px); overflow:auto; box-sizing:border-box; padding:14px; border:1px solid #ffffff24; border-radius:16px; background:#101827f2; color:#fff; box-shadow:0 8px 28px #0007; font:14px/1.4 system-ui,sans-serif; }
+  #figure-avatar-pose-panel[hidden] { display:none; }
+  #figure-avatar-pose-panel h2 { margin:0 0 10px; font-size:16px; }
+  #figure-avatar-pose-panel label { display:block; margin:10px 0 4px; color:#dbe4f0; }
+  #figure-avatar-pose-panel select { width:100%; padding:9px; border:1px solid #667085; border-radius:8px; background:#202b3c; color:white; font:inherit; }
+  .figure-avatar-axis { display:grid; grid-template-columns:32px 1fr 42px; gap:8px; align-items:center; margin:8px 0; }
+  .figure-avatar-axis input { width:100%; accent-color:#79b8ff; }
+  .figure-avatar-axis output { text-align:right; font-variant-numeric:tabular-nums; }
+  #figure-avatar-scale-value { font-variant-numeric:tabular-nums; }
+  .figure-avatar-actions { display:flex; gap:8px; margin-top:12px; }
+  .figure-avatar-actions button { flex:1; padding:9px 6px; border:0; border-radius:8px; background:#34435a; color:white; font:inherit; }
+  #figure-avatar-pose-panel input:disabled, #figure-avatar-pose-panel select:disabled, #figure-avatar-pose-panel button:disabled { opacity:.45; }
+  #figure-avatar-ar-quicklook { z-index:10002; }
+  #figure-avatar-ar-placement-hint { z-index:10001; }
+</style>
+<button id="figure-avatar-pose-toggle" type="button" aria-expanded="false">関節・サイズ ▼</button>
+<section id="figure-avatar-pose-panel" hidden>
+  <h2>関節を選んで姿勢を調整</h2>
+  <fieldset id="figure-avatar-pose-fields" disabled style="border:0;padding:0;margin:0">
+    <label for="figure-avatar-joint">操作する関節</label>
+    <select id="figure-avatar-joint"></select>
+    <div class="figure-avatar-axis"><span>X</span><input type="range" min="-90" max="90" value="0" step="1" data-axis="0"><output>0°</output></div>
+    <div class="figure-avatar-axis"><span>Y</span><input type="range" min="-90" max="90" value="0" step="1" data-axis="1"><output>0°</output></div>
+    <div class="figure-avatar-axis"><span>Z</span><input type="range" min="-90" max="90" value="0" step="1" data-axis="2"><output>0°</output></div>
+    <div class="figure-avatar-actions"><button id="figure-avatar-reset-joint" type="button">この関節を戻す</button><button id="figure-avatar-reset-all" type="button">全身を初期化</button></div>
+    <label for="figure-avatar-model-scale">モデルの大きさ <output id="figure-avatar-scale-value">1.00倍</output></label>
+    <input id="figure-avatar-model-scale" type="range" min="0.5" max="2" value="1" step="0.05" style="width:100%;accent-color:#79b8ff">
+  </fieldset>
+</section>
+<script>
+(() => {
+  const target = "hip";
+  const unityReady = () => {
+    const unity = window.figureAvatarUnityInstance;
+    if (!unity) return;
+    document.getElementById('figure-avatar-pose-fields').disabled = false;
+  };
+  window.addEventListener('figure-avatar-unity-ready', unityReady);
+  unityReady();
+
+  const groups = [
+    ['胴体', [['hip','腰'],['supine','胴の付け根'],['chest','胸'],['neck','首'],['head','頭']]],
+    ['腕', [['LeftShoulder','左肩'],['LeftUpperArm','左上腕'],['LeftElbow','左ひじ'],['LeftWrist','左手首'],['RightShoulder','右肩'],['RightUpperArm','右上腕'],['RightElbow','右ひじ'],['RightWrist','右手首']]],
+    ['脚', [['LeftUpperLeg','左脚'],['LeftKnee','左ひざ'],['LeftAnkle','左足首'],['RightUpperLeg','右脚'],['RightKnee','右ひざ'],['RightAnkle','右足首']]]
+  ];
+  const select = document.getElementById('figure-avatar-joint');
+  groups.forEach(([group, joints]) => {
+    const optgroup = document.createElement('optgroup');
+    optgroup.label = group;
+    joints.forEach(([name, label]) => {
+      const option = document.createElement('option');
+      option.value = name; option.textContent = label;
+      optgroup.appendChild(option);
+    });
+    select.appendChild(optgroup);
+  });
+
+  const angles = new Map();
+  const axes = Array.from(document.querySelectorAll('.figure-avatar-axis input'));
+  const updateJoint = () => {
+    const values = axes.map(input => Number(input.value));
+    angles.set(select.value, values);
+    const unity = window.figureAvatarUnityInstance;
+    if (unity) unity.SendMessage(target, 'SetJointRotation', [select.value, ...values].join('|'));
+    axes.forEach(input => input.nextElementSibling.textContent = input.value + '°');
+  };
+  const showJoint = () => {
+    const values = angles.get(select.value) || [0,0,0];
+    axes.forEach((input, index) => { input.value = values[index]; input.nextElementSibling.textContent = values[index] + '°'; });
+  };
+  axes.forEach(input => input.addEventListener('input', updateJoint));
+  select.addEventListener('change', showJoint);
+
+  document.getElementById('figure-avatar-pose-toggle').addEventListener('click', event => {
+    const panel = document.getElementById('figure-avatar-pose-panel');
+    panel.hidden = !panel.hidden;
+    event.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+    event.currentTarget.textContent = panel.hidden ? '関節・サイズ ▼' : '操作を閉じる ▲';
+  });
+  document.getElementById('figure-avatar-reset-joint').addEventListener('click', () => {
+    angles.set(select.value, [0,0,0]); showJoint(); updateJoint();
+  });
+  document.getElementById('figure-avatar-reset-all').addEventListener('click', () => {
+    angles.clear(); showJoint();
+    const scale = document.getElementById('figure-avatar-model-scale');
+    scale.value = '1'; document.getElementById('figure-avatar-scale-value').textContent = '1.00倍';
+    const unity = window.figureAvatarUnityInstance;
+    if (unity) unity.SendMessage(target, 'ResetAllPose');
+  });
+  const scale = document.getElementById('figure-avatar-model-scale');
+  scale.addEventListener('input', () => {
+    document.getElementById('figure-avatar-scale-value').textContent = Number(scale.value).toFixed(2) + '倍';
+    const unity = window.figureAvatarUnityInstance;
+    if (unity) unity.SendMessage(target, 'SetModelScale', scale.value);
+  });
+})();
+</script>
+
 <style>
   #figure-avatar-ar-quicklook { position: fixed; z-index: 10000; right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); display: flex; align-items: center; gap: 10px; padding: 9px 15px 9px 9px; border-radius: 999px; background: #fff; color: #172033; box-shadow: 0 3px 16px #0006; font: 600 15px system-ui, sans-serif; text-decoration: none; }
   #figure-avatar-ar-quicklook img { width: 42px; height: 42px; object-fit: cover; border-radius: 50%; }
@@ -156,6 +257,5 @@
   <img src="./AR/FigureAvatarAR-preview.png" alt=""><span>ARで配置</span>
 </a>
 <div id="figure-avatar-ar-placement-hint">AR画面で床面をタップして場所を指定。ドラッグで移動、2本指でサイズを調整できます。</div>
-
 </body>
 </html>

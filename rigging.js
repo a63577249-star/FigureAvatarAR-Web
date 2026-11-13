@@ -494,7 +494,7 @@ async function loadAiSessions(ort){
 async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
   if(!navigator.gpu)throw new Error('このブラウザーではWebGPUを使えません。PC版ChromeまたはEdgeで試してください。');
-  const ort=await import('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/esm/ort.webgpu.min.mjs');
+  const ort=await import('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/esm/ort.webgpu.min.js');
   const {encoder,embed,decoder}=await loadAiSessions(ort);
   setStatus('モデル表面から点と法線を抽出しています…');
   const cloud=sampleModelSurface(16384);

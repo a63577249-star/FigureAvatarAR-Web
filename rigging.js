@@ -372,7 +372,7 @@ function generateMeshWeights(entry,bonesByName,rootSize){
   const segmentData=SEGMENTS.map(([a,b])=>({a:BONE_DEFS.findIndex(j=>j.name===a),b:BONE_DEFS.findIndex(j=>j.name===b)}));
   const segmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
   const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
-  const dense=new Float32Array(count*boneCount);
+  let dense=new Float32Array(count*boneCount);
   for(let v=0;v<count;v++){
     const p=rootVertices[v],hits=[];
     for(let s=0;s<segmentData.length;s++){

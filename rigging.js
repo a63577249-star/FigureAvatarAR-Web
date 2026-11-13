@@ -109,7 +109,6 @@ renderBoneList();
 function setRigEditingEnabled(enabled) {
   placeButton.disabled = !enabled;
   autoButton.disabled = !enabled;
-  aiRigButton.disabled = !enabled;
   generateButton.disabled = !enabled;
 }
 
@@ -584,7 +583,7 @@ function buildAiBoneDefs(records,center,longest){
 }
 
 async function runAiAutoRig(){
-  if(!modelRoot)return;
+  if(!modelRoot){setStatus('先にボーンのないGLB、glTF、OBJモデルを読み込んでください。');return;}
   aiRigButton.disabled=true;
   try{
     const prediction=await predictAiSkeleton();

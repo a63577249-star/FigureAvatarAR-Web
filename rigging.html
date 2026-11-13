@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>モデル追加・ボーン設定 | FigureAvatarAR</title>
+  <style>
+    :root { color-scheme:dark; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; background:#10151f; color:#edf2fa; }
+    * { box-sizing:border-box; }
+    body { margin:0; min-height:100vh; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; background:#171f2d; border-bottom:1px solid #ffffff1c; }
+    header h1 { margin:0; font-size:17px; }
+    a { color:#b8d7ff; }
+    main { display:grid; grid-template-columns:minmax(270px,340px) 1fr; min-height:calc(100vh - 52px); }
+    aside { padding:16px; overflow:auto; max-height:calc(100vh - 52px); background:#141b27; border-right:1px solid #ffffff1c; }
+    #viewport { position:relative; min-height:70vh; overflow:hidden; background:radial-gradient(ellipse at 50% 40%,#263347,#111722 72%); touch-action:none; }
+    #viewport canvas { display:block; width:100%; height:100%; }
+    .group { margin:0 0 16px; padding:0 0 14px; border-bottom:1px solid #ffffff1a; }
+    .group h2 { margin:0 0 9px; font-size:14px; }
+    .hint { margin:8px 0; color:#b9c5d5; font-size:12px; line-height:1.5; }
+    input,select,button { width:100%; min-height:42px; border:1px solid #536278; border-radius:9px; padding:9px 11px; background:#222d3d; color:white; font:inherit; }
+    input[type=file] { padding:7px; font-size:12px; }
+    button { cursor:pointer; font-weight:650; background:#284a70; border-color:#5a8abd; }
+    button:disabled { cursor:not-allowed; opacity:.45; }
+    button.secondary { margin-top:7px; background:#2b3545; border-color:#596579; }
+    .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .checkrow { display:flex; align-items:center; gap:8px; margin-top:8px; color:#d5dfeb; font-size:12px; }
+    .checkrow input { width:18px; min-height:18px; }
+    #status { min-height:42px; padding:10px; border-radius:9px; background:#202b3b; color:#d8e4f3; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+    #bone-list { display:grid; gap:5px; max-height:210px; overflow:auto; }
+    .bone-item { display:flex; align-items:center; gap:8px; min-height:35px; padding:4px 8px; border:1px solid #ffffff1c; border-radius:7px; background:#1c2634; font-size:12px; cursor:pointer; }
+    .bone-item.active { border-color:#57c9ef; background:#24394a; }
+    .bone-item.done::after { content:"配置済み"; margin-left:auto; color:#79d5a1; font-size:10px; }
+    .dot { width:9px; height:9px; border-radius:50%; background:#55d6f4; }
+    #view-help { position:absolute; left:12px; bottom:12px; max-width:min(450px,calc(100% - 24px)); padding:9px 12px; border-radius:10px; background:#101827d9; color:#dbe7f4; font-size:12px; pointer-events:none; }
+    @media(max-width:760px) {
+      main { display:flex; flex-direction:column; }
+      #viewport { order:0; height:52vh; min-height:320px; }
+      aside { order:1; max-height:none; overflow:visible; border-right:0; }
+      header { padding-top:max(10px,env(safe-area-inset-top)); }
+    }
+  </style>
+  <script type="importmap">
+    {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"}}
+  </script>
+</head>
+<body>
+  <header><h1>モデル追加・ボーン設定</h1><a href="./index.html">表示ページへ戻る</a></header>
+  <main>
+    <aside>
+      <section class="group">
+        <h2>1. モデルを追加</h2>
+        <input id="model-files" type="file" accept=".glb,.gltf,.obj" multiple>
+        <p class="hint">GLB / glTF / OBJに対応。glTFは関連する.bin・画像ファイルも同時に選択してください。モデルはこのブラウザー内で処理し、サーバーへ送信しません。PMXはBlenderなどでGLBへ変換してください。</p>
+        <label class="checkrow"><input id="auto-rig" type="checkbox" checked>標準19関節を仮配置する</label>
+      </section>
+      <section class="group">
+        <h2>2. ボーンの位置を調整</h2>
+        <div id="bone-list"></div>
+        <p class="hint">関節を選び、3Dモデル上の中心位置をタップします。ドラッグで視点を回し、2本指で拡大縮小できます。仮配置を使った場合も各関節を確認してください。</p>
+        <div class="row"><button id="place-toggle" class="secondary" disabled>位置を置く：OFF</button><button id="auto-place" class="secondary" disabled>標準位置を再配置</button></div>
+      </section>
+      <section class="group">
+        <h2>3. ウェイトを生成・保存</h2>
+        <button id="generate" disabled>ボーンとウェイトを生成</button>
+        <button id="export" class="secondary" disabled>リギング済みGLBを保存</button>
+        <p class="hint">各頂点を近いボーン区間へ割り当て、接続する関節と隣接頂点に沿ってウェイトをなじませます。出力GLBはダウンロードして保管できます。</p>
+      </section>
+      <div id="status" role="status">モデルファイルを選択してください。</div>
+    </aside>
+    <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
+  </main>
+  <script type="module" src="./rigging.js"></script>
+</body>
+</html>

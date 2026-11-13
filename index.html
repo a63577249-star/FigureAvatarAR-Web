@@ -149,6 +149,7 @@ window.dispatchEvent(new Event('figure-avatar-unity-ready'));
 
     </script>
   <style>
+  #figure-avatar-rig-editor-link { position:fixed; z-index:10003; top:max(12px,env(safe-area-inset-top)); right:max(12px,env(safe-area-inset-right)); padding:11px 14px; border:1px solid #ffffff40; border-radius:12px; background:#172033ed; color:#fff; box-shadow:0 3px 14px #0005; font:600 14px system-ui,sans-serif; text-decoration:none; }
   #figure-avatar-pose-toggle { position:fixed; z-index:10001; top:max(12px,env(safe-area-inset-top)); left:max(12px,env(safe-area-inset-left)); border:0; border-radius:12px; padding:11px 15px; background:#172033ed; color:white; box-shadow:0 3px 14px #0005; font:600 15px system-ui,sans-serif; }
   #figure-avatar-pose-panel { position:fixed; z-index:10001; top:58px; left:max(12px,env(safe-area-inset-left)); width:min(330px,calc(100vw - 24px)); max-height:calc(100dvh - 92px); overflow:auto; box-sizing:border-box; padding:14px; border:1px solid #ffffff24; border-radius:16px; background:#101827f2; color:#fff; box-shadow:0 8px 28px #0007; font:14px/1.4 system-ui,sans-serif; }
   #figure-avatar-pose-panel[hidden] { display:none; }
@@ -167,6 +168,7 @@ window.dispatchEvent(new Event('figure-avatar-unity-ready'));
   #figure-avatar-ar-quicklook { z-index:10002; }
   #figure-avatar-ar-placement-hint { z-index:10001; }
 </style>
+<a id="figure-avatar-rig-editor-link" href="./rigging.html">モデル追加・ボーン設定</a>
 <button id="figure-avatar-pose-toggle" type="button" aria-expanded="false">関節・サイズ ▼</button>
 <section id="figure-avatar-pose-panel" hidden>
   <h2>関節を選んで姿勢を調整</h2>

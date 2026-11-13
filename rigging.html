@@ -57,11 +57,13 @@
       </section>
       <section class="group">
         <h2>2. ボーンの位置を調整</h2>
+        <button id="ai-auto-rig" class="secondary" disabled>AIでボーンを自動推定（実験）</button>
+        <p class="hint">初回のみAIモデル約455MBを取得します。推定処理はブラウザー内で行い、アップロードした3Dモデルは送信しません。AIはボーンを推定し、ウェイトはこのページの自動生成処理で作ります。WebGPU対応のPC版Chrome / Edgeを推奨します。AIモデル: <a href="https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu" target="_blank" rel="noreferrer">UniRigブラウザー版</a></p>
         <div id="bone-list"></div>
         <label class="hint" for="bone-depth">表面から内側へ <output id="bone-depth-value">3%</output></label>
         <input id="bone-depth" type="range" min="0" max="12" value="3" step="0.5">
         <p class="hint">関節を選び、モデル表面の関節位置をタップします。点は表面法線に沿って内側へ移動します。深さは上のスライダーで調整できます。ドラッグで視点を回し、2本指で拡大縮小できます。</p>
-        <div class="row"><button id="place-toggle" class="secondary" disabled>位置を置く：OFF</button><button id="auto-place" class="secondary" disabled>標準位置を再配置</button></div>
+        <div class="row"><button id="place-toggle" class="secondary" disabled>位置を置く：OFF</button><button id="auto-place" class="secondary" disabled>標準19関節に戻す</button></div>
       </section>
       <section class="group">
         <h2>3. ウェイトを生成・保存</h2>

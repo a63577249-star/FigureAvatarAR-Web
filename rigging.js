@@ -14,14 +14,8 @@ const BONE_DEFS = [
   ['LeftUpperLeg','左脚','hip'], ['LeftKnee','左ひざ','LeftUpperLeg'], ['LeftAnkle','左足首','LeftKnee'],
   ['RightUpperLeg','右脚','hip'], ['RightKnee','右ひざ','RightUpperLeg'], ['RightAnkle','右足首','RightKnee']
 ].map(([name,label,parent]) => ({ name,label,parent,position:null,surfacePoint:null,surfaceNormal:null,bone:null,marker:null }));
+const TEMPLATE_BONES = BONE_DEFS.map(bone => ({ ...bone }));
 
-const SEGMENTS = [
-  ['hip','supine'],['supine','chest'],['chest','neck'],['neck','head'],
-  ['chest','LeftShoulder'],['LeftShoulder','LeftUpperArm'],['LeftUpperArm','LeftElbow'],['LeftElbow','LeftWrist'],
-  ['chest','RightShoulder'],['RightShoulder','RightUpperArm'],['RightUpperArm','RightElbow'],['RightElbow','RightWrist'],
-  ['hip','LeftUpperLeg'],['LeftUpperLeg','LeftKnee'],['LeftKnee','LeftAnkle'],
-  ['hip','RightUpperLeg'],['RightUpperLeg','RightKnee'],['RightKnee','RightAnkle']
-];
 
 const viewport = document.querySelector('#viewport');
 const statusBox = document.querySelector('#status');
@@ -31,6 +25,7 @@ const placeButton = document.querySelector('#place-toggle');
 const autoButton = document.querySelector('#auto-place');
 const generateButton = document.querySelector('#generate');
 const exportButton = document.querySelector('#export');
+const aiRigButton = document.querySelector('#ai-auto-rig');
 const viewHelp = document.querySelector('#view-help');
 const boneDepth = document.querySelector('#bone-depth');
 const boneDepthValue = document.querySelector('#bone-depth-value');
@@ -69,10 +64,20 @@ let placeMode = false;
 let rigLines = null;
 let sourceName = 'avatar';
 let pointerStart = null;
+let rigMode = 'template';
+let aiSessions = null;
 
 function setStatus(message) { statusBox.textContent = message; }
 function boneByName(name) { return BONE_DEFS.find(b => b.name === name); }
 function localPoint(worldPoint) { return modelRoot.worldToLocal(worldPoint.clone()); }
+function restoreTemplateBoneDefs() {
+  BONE_DEFS.splice(0,BONE_DEFS.length,...TEMPLATE_BONES.map(bone=>({
+    ...bone,position:null,surfacePoint:null,surfaceNormal:null,bone:null,marker:null
+  })));
+  activeBoneName=BONE_DEFS[0]?.name||'';
+  rigMode='template';
+  renderBoneList();
+}
 function resize() {
   const width = Math.max(1, viewport.clientWidth);
   const height = Math.max(1, viewport.clientHeight);
@@ -104,6 +109,7 @@ renderBoneList();
 function setRigEditingEnabled(enabled) {
   placeButton.disabled = !enabled;
   autoButton.disabled = !enabled;
+  aiRigButton.disabled = !enabled;
   generateButton.disabled = !enabled;
 }
 
@@ -124,7 +130,7 @@ function revokeOldModel() {
   modelRoot = null;
   modelEntries = [];
   generatedRig = null;
-  BONE_DEFS.forEach(bone => { bone.position = null; bone.surfacePoint=null; bone.surfaceNormal=null; bone.bone = null; bone.marker = null; });
+  restoreTemplateBoneDefs();
   exportButton.disabled = true;
   setRigEditingEnabled(false);
   renderBoneList();
@@ -344,7 +350,11 @@ placeButton.addEventListener('click',()=>{
   controls.enabled=!placeMode;
   viewHelp.textContent=placeMode?'選択中の関節の中心をモデル表面でタップ。配置後は次の未配置関節へ進みます。':'ドラッグで視点を回転できます。';
 });
-autoButton.addEventListener('click',placeStandardRig);
+autoButton.addEventListener('click',()=>{
+  restoreTemplateBoneDefs();
+  autoButton.textContent='標準19関節に戻す';
+  placeStandardRig();
+});
 fileInput.addEventListener('change',event=>loadModel(Array.from(event.target.files||[])));
 
 function makeAdjacency(geometry, vertexCount) {
@@ -377,6 +387,221 @@ function coincidentVertexGroups(positions, scale) {
   return Array.from(groups.values()).filter(group=>group.length>1);
 }
 
+function sampleModelSurface(pointCount=16384) {
+  modelRoot.updateMatrixWorld(true);
+  const inverseRoot=modelRoot.matrixWorld.clone().invert();
+  let triangleCount=0;
+  for(const entry of modelEntries){
+    const geometry=entry.geometry,position=geometry.attributes.position;
+    triangleCount+=Math.floor((geometry.index?.count||position.count)/3);
+  }
+  if(!triangleCount)throw new Error('三角形メッシュがありません。');
+  const triangleData=new Float32Array(triangleCount*12);
+  const cumulativeArea=new Float64Array(triangleCount);
+  let used=0,totalArea=0;
+  for(const entry of modelEntries){
+    const mesh=entry.mesh,geometry=entry.geometry,position=geometry.attributes.position;
+    const normal=geometry.attributes.normal;
+    const index=geometry.index?.array;
+    const indexCount=index?index.length:position.count;
+    const meshToRoot=inverseRoot.clone().multiply(mesh.matrixWorld);
+    const normalMatrix=new THREE.Matrix3().getNormalMatrix(meshToRoot);
+    for(let i=0;i+2<indexCount;i+=3){
+      const ia=index?index[i]:i,ib=index?index[i+1]:i+1,ic=index?index[i+2]:i+2;
+      const a=new THREE.Vector3().fromBufferAttribute(position,ia).applyMatrix4(meshToRoot);
+      const b=new THREE.Vector3().fromBufferAttribute(position,ib).applyMatrix4(meshToRoot);
+      const c=new THREE.Vector3().fromBufferAttribute(position,ic).applyMatrix4(meshToRoot);
+      const cross=b.clone().sub(a).cross(c.clone().sub(a));
+      const area=cross.length()*0.5;
+      if(area<=1e-12)continue;
+      let na,nb,nc;
+      if(normal){
+        na=new THREE.Vector3().fromBufferAttribute(normal,ia).applyMatrix3(normalMatrix).normalize();
+        nb=new THREE.Vector3().fromBufferAttribute(normal,ib).applyMatrix3(normalMatrix).normalize();
+        nc=new THREE.Vector3().fromBufferAttribute(normal,ic).applyMatrix3(normalMatrix).normalize();
+      }else{
+        na=nb=nc=cross.normalize();
+      }
+      const offset=used*12;
+      triangleData.set([...a.toArray(),...b.toArray(),...c.toArray(),...na.toArray()],offset);
+      // Store the remaining vertex normals in a compact parallel block.
+      totalArea+=area;cumulativeArea[used]=totalArea;
+      used++;
+      // The temporary fields are appended below after allocation is trimmed.
+      if(!entry._aiTriangleNormals)entry._aiTriangleNormals=[];
+      entry._aiTriangleNormals.push(...nb.toArray(),...nc.toArray());
+    }
+  }
+  if(!used||totalArea<=0)throw new Error('表面をサンプリングできませんでした。');
+  const data=triangleData.slice(0,used*12),areas=cumulativeArea.slice(0,used);
+  // Keep normals for all three corners in a second compact array.
+  const normals=new Float32Array(used*9);
+  let cursor=0;
+  for(const entry of modelEntries){
+    const raw=entry._aiTriangleNormals||[];
+    for(let i=0;i<raw.length;i+=6){
+      const triIndex=cursor++;
+      if(triIndex>=used)break;
+      normals.set(data.subarray(triIndex*12+9,triIndex*12+12),triIndex*9);
+      normals.set(raw.slice(i,i+6),triIndex*9+3);
+    }
+    delete entry._aiTriangleNormals;
+  }
+  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3());
+  const center=bounds.getCenter(new THREE.Vector3());
+  const longest=Math.max(size.x,size.y,size.z,1e-6);
+  const vertices=new Float32Array(pointCount*3),sampledNormals=new Float32Array(pointCount*3);
+  for(let sample=0;sample<pointCount;sample++){
+    const target=Math.random()*totalArea;
+    let low=0,high=used-1;
+    while(low<high){const mid=(low+high)>>1;if(areas[mid]<target)low=mid+1;else high=mid;}
+    const tri=low,offset=tri*12,no=tri*9;
+    const root=Math.sqrt(Math.random()),u=1-root,v=root*(1-Math.random()),w=1-u-v;
+    for(let axis=0;axis<3;axis++){
+      const coordinate=data[offset+axis]*u+data[offset+3+axis]*v+data[offset+6+axis]*w;
+      vertices[sample*3+axis]=(coordinate-center.getComponent(axis))*2/longest;
+      sampledNormals[sample*3+axis]=normals[no+axis]*u+normals[no+3+axis]*v+normals[no+6+axis]*w;
+    }
+    const n=new THREE.Vector3(sampledNormals[sample*3],sampledNormals[sample*3+1],sampledNormals[sample*3+2]).normalize();
+    sampledNormals[sample*3]=n.x;sampledNormals[sample*3+1]=n.y;sampledNormals[sample*3+2]=n.z;
+  }
+  return {vertices,normals:sampledNormals,center,longest};
+}
+
+function allowedAiToken(logits,coordinateCount,segmentCount,branchPending){
+  const vocab=267;
+  const candidates=[];
+  for(let token=0;token<256;token++)candidates.push(token);
+  if(coordinateCount===0&&segmentCount>0&&!branchPending){candidates.push(256,258);}
+  let best=candidates[0],score=-Infinity;
+  for(const token of candidates){const value=logits[token];if(value>score){score=value;best=token;}}
+  return best;
+}
+
+async function loadAiSessions(ort){
+  if(aiSessions)return aiSessions;
+  const base='https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu/resolve/main/';
+  const options={executionProviders:['webgpu'],graphOptimizationLevel:'all'};
+  ort.env.wasm.wasmPaths='https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/';
+  setStatus('AIモデルを読み込んでいます（初回は約455MB。ブラウザー内で実行します）…');
+  const encoder=await ort.InferenceSession.create(base+'encoder_q8.onnx',options);
+  setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');
+  const embed=await ort.InferenceSession.create(base+'embed.onnx',options);
+  const decoder=await ort.InferenceSession.create(base+'decoder_q8.onnx',options);
+  aiSessions={ort,encoder,embed,decoder};
+  return aiSessions;
+}
+
+async function predictAiSkeleton(){
+  if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
+  if(!navigator.gpu)throw new Error('このブラウザーではWebGPUを使えません。PC版ChromeまたはEdgeで試してください。');
+  const ort=await import('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.1/dist/esm/ort.webgpu.min.mjs');
+  const {encoder,embed,decoder}=await loadAiSessions(ort);
+  setStatus('モデル表面から点と法線を抽出しています…');
+  const cloud=sampleModelSurface(16384);
+  const vertexTensor=new ort.Tensor('float32',cloud.vertices,[1,16384,3]);
+  const normalTensor=new ort.Tensor('float32',cloud.normals,[1,16384,3]);
+  const encoderInputs={};
+  const vertexInput=encoder.inputNames.find(name=>/vertices|points/i.test(name))||encoder.inputNames[0];
+  const normalInput=encoder.inputNames.find(name=>/normals/i.test(name))||encoder.inputNames[1];
+  encoderInputs[vertexInput]=vertexTensor;encoderInputs[normalInput]=normalTensor;
+  setStatus('AIが形状を解析しています…');
+  const encoded=await encoder.run(encoderInputs);
+  const latentName=encoder.outputNames.find(name=>/latent/i.test(name))||encoder.outputNames[0];
+  const latents=encoded[latentName];
+  const ids=new ort.Tensor('int64',new BigInt64Array([257n,266n]),[1,2]);
+  const embedded=await embed.run({[embed.inputNames[0]]:ids});
+  const prompt=embedded[embed.outputNames[0]];
+  const prefill=new Float32Array(latents.data.length+prompt.data.length);
+  prefill.set(latents.data,0);prefill.set(prompt.data,latents.data.length);
+  const pastInputs=decoder.inputNames.filter(name=>/^past\./.test(name));
+  if(!pastInputs.length)throw new Error('AIモデルのキャッシュ入力形式を認識できません。');
+  const feeds={inputs_embeds:new ort.Tensor('float32',prefill,[1,1026,1024])};
+  for(const name of pastInputs)feeds[name]=new ort.Tensor('float32',new Float32Array(0),[1,16,0,64]);
+  let decoded=await decoder.run(feeds);
+  const logitsName=decoder.outputNames.find(name=>/logits/i.test(name))||decoder.outputNames[0];
+  const cacheForInput=name=>name.replace(/^past\./,'present.');
+  let cache={};
+  for(const inputName of pastInputs){
+    const outputName=cacheForInput(inputName);
+    if(!decoded[outputName])throw new Error(`AIモデルのキャッシュ出力がありません: ${outputName}`);
+    cache[inputName]=decoded[outputName];
+  }
+  const records=[];
+  let coords=[],branchPending=false;
+  for(let step=0;step<512;step++){
+    const logitsTensor=decoded[logitsName],vocab=267;
+    const sequenceLength=logitsTensor.dims[1];
+    const logits=logitsTensor.data.subarray((sequenceLength-1)*vocab,sequenceLength*vocab);
+    const token=allowedAiToken(logits,coords.length,records.length,branchPending);
+    if(token===258)break;
+    if(token===256){branchPending=true;}
+    else{
+      coords.push(token);
+      if(coords.length===6){records.push({coordinates:coords,branch:branchPending});coords=[];branchPending=false;}
+    }
+    if(records.length>=64&&coords.length===0)break;
+    if(step%4===0){setStatus(`AIがボーンを推定しています… ${records.length}本`);await new Promise(resolve=>setTimeout(resolve,0));}
+    const tokenInput=new ort.Tensor('int64',new BigInt64Array([BigInt(token)]),[1,1]);
+    const tokenEmbedding=await embed.run({[embed.inputNames[0]]:tokenInput});
+    const nextEmbedding=tokenEmbedding[embed.outputNames[0]];
+    const nextFeeds={inputs_embeds:nextEmbedding};
+    for(const name of pastInputs)nextFeeds[name]=cache[name];
+    decoded=await decoder.run(nextFeeds);
+    cache={};
+    for(const name of pastInputs){
+      const outputName=cacheForInput(name);
+      if(!decoded[outputName])throw new Error(`AIモデルのキャッシュ出力がありません: ${outputName}`);
+      cache[name]=decoded[outputName];
+    }
+  }
+  if(!records.length)throw new Error('AIがボーンを生成できませんでした。モデルの向きや形状を確認してください。');
+  return {records,center:cloud.center,longest:cloud.longest};
+}
+
+function buildAiBoneDefs(records,center,longest){
+  const nodes=[];
+  const tolerance=longest*0.035;
+  const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
+    .multiplyScalar(longest*0.5).add(center);
+  const findNode=point=>{
+    let best=null,bestDistance=tolerance;
+    for(const node of nodes){const distance=node.position.distanceTo(point);if(distance<bestDistance){best=node;bestDistance=distance;}}
+    return best;
+  };
+  for(const record of records){
+    const parentPoint=decodePoint(record.coordinates.slice(0,3));
+    const jointPoint=decodePoint(record.coordinates.slice(3,6));
+    let parent=findNode(parentPoint);
+    if(!parent){
+      parent={name:`ai_joint_${String(nodes.length+1).padStart(2,'0')}`,label:`AI関節 ${nodes.length+1}`,parent:null,position:parentPoint,surfacePoint:null,surfaceNormal:null,bone:null,marker:null};
+      nodes.push(parent);
+    }
+    const child={name:`ai_joint_${String(nodes.length+1).padStart(2,'0')}`,label:`AI関節 ${nodes.length+1}`,parent:parent.name,position:jointPoint,surfacePoint:null,surfaceNormal:null,bone:null,marker:null};
+    nodes.push(child);
+  }
+  return nodes;
+}
+
+async function runAiAutoRig(){
+  if(!modelRoot)return;
+  aiRigButton.disabled=true;
+  try{
+    const prediction=await predictAiSkeleton();
+    const nodes=buildAiBoneDefs(prediction.records,prediction.center,prediction.longest);
+    if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');
+    BONE_DEFS.splice(0,BONE_DEFS.length,...nodes);
+    rigMode='ai';activeBoneName=BONE_DEFS[0].name;
+    updateMarkers();renderBoneList();
+    autoButton.textContent='標準19関節に戻す';
+    setStatus(`AIが${prediction.records.length}本のボーン（${nodes.length}関節）を推定しました。既存のウェイト生成で続けられます。`);
+  }catch(error){
+    console.error(error);
+    setStatus(`AI自動推定に失敗しました: ${error.message||error}`);
+  }finally{aiRigButton.disabled=false;}
+}
+aiRigButton.addEventListener('click',runAiAutoRig);
+
 function normalizeWeights(values,offset,boneCount){
   let sum=0;for(let b=0;b<boneCount;b++)sum+=values[offset+b];
   if(sum<=1e-12){values[offset]=1;sum=1;}
@@ -394,7 +619,10 @@ function generateMeshWeights(entry,bonesByName,rootSize){
     const p=new THREE.Vector3().fromBufferAttribute(sourcePositions,i).applyMatrix4(mesh.matrixWorld);
     rootVertices.push(modelRoot.worldToLocal(p));
   }
-  const segmentData=SEGMENTS.map(([a,b])=>({a:BONE_DEFS.findIndex(j=>j.name===a),b:BONE_DEFS.findIndex(j=>j.name===b)}));
+  const indexByName=new Map(BONE_DEFS.map((bone,index)=>[bone.name,index]));
+  const segmentData=BONE_DEFS.map((bone,index)=>bone.parent&&indexByName.has(bone.parent)
+    ? {a:indexByName.get(bone.parent),b:index}:null).filter(Boolean);
+  if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
   const segmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
   const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
   let dense=new Float32Array(count*boneCount);

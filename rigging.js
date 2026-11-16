@@ -481,23 +481,33 @@ async function loadAiSessions(ort){
   if(aiSessions)return aiSessions;
   const base='https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu/resolve/main/';
   const options={executionProviders:['webgpu'],graphOptimizationLevel:'all'};
+  ort.env.wasm.proxy=false;
+  ort.env.wasm.numThreads=1;
   const ortRuntimeBase=new URL('./vendor/onnxruntime-web-1.31.1/',import.meta.url);
   ort.env.wasm.wasmPaths={
     mjs:new URL('ort-wasm-simd-threaded.asyncify.mjs',ortRuntimeBase).href,
     wasm:new URL('ort-wasm-simd-threaded.asyncify.wasm',ortRuntimeBase).href
   };
-  setStatus('AIモデルを読み込んでいます（初回は約455MB。ブラウザー内で実行します）…');
-  const encoder=await ort.InferenceSession.create(base+'encoder_q8.onnx',{
-    ...options,
-    externalData:[{path:'encoder_q8.onnx.data',data:base+'encoder_q8.onnx.data'}]
-  });
+  const createSession=async(modelName,externalDataName=null)=>{
+    setStatus(`AIモデルを取得しています: ${modelName}${externalDataName?' と外部データ':''}…`);
+    const modelResponse=await fetch(base+modelName);
+    if(!modelResponse.ok)throw new Error(`${modelName}の取得に失敗しました（HTTP ${modelResponse.status}）。`);
+    const modelBytes=new Uint8Array(await modelResponse.arrayBuffer());
+    const sessionOptions={...options};
+    if(externalDataName){
+      const dataResponse=await fetch(base+externalDataName);
+      if(!dataResponse.ok)throw new Error(`${externalDataName}の取得に失敗しました（HTTP ${dataResponse.status}）。`);
+      sessionOptions.externalData=[{
+        path:externalDataName,
+        data:new Uint8Array(await dataResponse.arrayBuffer())
+      }];
+    }
+    return ort.InferenceSession.create(modelBytes,sessionOptions);
+  };
+  const encoder=await createSession('encoder_q8.onnx','encoder_q8.onnx.data');
   setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');
-  const embed=await ort.InferenceSession.create(base+'embed.onnx',options);
-  setStatus('AIモデルを読み込んでいます…（デコーダーと外部データ）');
-  const decoder=await ort.InferenceSession.create(base+'decoder_q8.onnx',{
-    ...options,
-    externalData:[{path:'decoder_q8.onnx.data',data:base+'decoder_q8.onnx.data'}]
-  });
+  const embed=await createSession('embed.onnx');
+  const decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data');
   aiSessions={ort,encoder,embed,decoder};
   return aiSessions;
 }

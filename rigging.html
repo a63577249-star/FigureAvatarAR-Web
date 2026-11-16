@@ -25,6 +25,11 @@
     button:disabled { cursor:not-allowed; opacity:.45; }
     button.secondary { margin-top:7px; background:#2b3545; border-color:#596579; }
     .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    details.region-sliders { margin:8px 0; padding:9px 10px; border:1px solid #ffffff24; border-radius:9px; background:#1b2533; }
+    details.region-sliders summary { min-height:36px; padding:6px 0; color:#dce8f6; font-weight:650; cursor:pointer; touch-action:manipulation; }
+    .region-axis { display:grid; grid-template-columns:70px 1fr 48px; gap:8px; align-items:center; min-height:46px; font-size:12px; }
+    .region-axis input { min-width:0; min-height:42px; padding:0; accent-color:#79b8ff; touch-action:pan-x; }
+    .region-axis output { text-align:right; font-variant-numeric:tabular-nums; color:#bcd7f5; }
     .checkrow { display:flex; align-items:center; gap:8px; margin-top:8px; color:#d5dfeb; font-size:12px; }
     .checkrow input { width:18px; min-height:18px; }
     #status { min-height:42px; padding:10px; border-radius:9px; background:#202b3b; color:#d8e4f3; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
@@ -58,7 +63,7 @@
       <section class="group">
         <h2>2. ボーンの位置を調整</h2>
         <button id="ai-auto-rig" class="secondary">AIでボーンを自動推定（実験）</button>
-        <p class="hint">初回のみAIモデル約455MBを取得します。推定処理はブラウザー内で行い、アップロードした3Dモデルは送信しません。AIはボーンを推定し、ウェイトはこのページの自動生成処理で作ります。WebGPU対応のPC版Chrome / Edgeを推奨します。AIモデル: <a href="https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu" target="_blank" rel="noreferrer">UniRigブラウザー版</a></p>
+        <p class="hint">初回のみAIモデル約455MBを取得します。AI推定はWebGPU対応端末で使用できます（Safari 26以降）。対応しない端末でも標準19関節の手動配置とウェイト生成は行えます。モデルは端末内で処理します。AIモデル: <a href="https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu" target="_blank" rel="noreferrer">UniRigブラウザー版</a></p>
         <div id="bone-list"></div>
         <label class="hint" for="bone-depth">表面から内側へ <output id="bone-depth-value">3%</output></label>
         <input id="bone-depth" type="range" min="0" max="12" value="3" step="0.5">
@@ -68,6 +73,14 @@
       <section class="group">
         <h2>3. Unity風の範囲で部位を指定</h2>
         <div class="row"><button id="region-toggle" class="secondary" disabled>範囲ボックスを表示</button><select id="region-mode" aria-label="範囲ボックス操作"><option value="translate">箱を移動</option><option value="scale">箱の大きさ</option></select></div>
+        <details class="region-sliders"><summary>スマホ向け：スライダーで箱を調整</summary>
+          <label class="region-axis">中心 X<input type="range" min="0" max="100" value="50" step="0.5" data-region-axis="center-x" disabled><output data-region-output="center-x">50%</output></label>
+          <label class="region-axis">中心 Y<input type="range" min="0" max="100" value="90" step="0.5" data-region-axis="center-y" disabled><output data-region-output="center-y">90%</output></label>
+          <label class="region-axis">中心 Z<input type="range" min="0" max="100" value="50" step="0.5" data-region-axis="center-z" disabled><output data-region-output="center-z">50%</output></label>
+          <label class="region-axis">幅 X<input type="range" min="1" max="100" value="42" step="0.5" data-region-axis="size-x" disabled><output data-region-output="size-x">42%</output></label>
+          <label class="region-axis">高さ Y<input type="range" min="1" max="100" value="22" step="0.5" data-region-axis="size-y" disabled><output data-region-output="size-y">22%</output></label>
+          <label class="region-axis">奥行 Z<input type="range" min="1" max="100" value="42" step="0.5" data-region-axis="size-z" disabled><output data-region-output="size-z">42%</output></label>
+        </details>
         <button id="region-detect" class="secondary" disabled>箱の中の頂点に割り当て</button>
         <p class="hint">水色の箱をUnityのSceneビューのように移動・拡大縮小します。先にボーンと割合を選び、このボタンで箱の中の頂点へ割り当てます。別の部位も箱を移して追加できます。選択頂点は紫色で表示されます。</p>
         <h2>選択した部位のウェイト</h2>
@@ -90,6 +103,6 @@
     </aside>
     <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
   </main>
-  <script type="module" src="./rigging.js?v=unity-region-box-local-weights-20261116"></script>
+  <script type="module" src="./rigging.js?v=ios-safari-region-sliders-20261116"></script>
 </body>
 </html>

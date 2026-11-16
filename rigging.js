@@ -39,13 +39,14 @@ const clearProtectedButton = document.querySelector('#clear-protected');
 const regionToggle = document.querySelector('#region-toggle');
 const regionModeSelect = document.querySelector('#region-mode');
 const regionDetectButton = document.querySelector('#region-detect');
+const regionAxisInputs = Array.from(document.querySelectorAll('[data-region-axis]'));
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#121a27');
 const camera = new THREE.PerspectiveCamera(45, 1, 0.001, 10000);
 camera.position.set(0, 1.5, 4);
 const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.matchMedia('(max-width:760px)').matches?1.5:2));
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 viewport.prepend(renderer.domElement);
 
@@ -87,6 +88,7 @@ let protectedVertices = new Map();
 let lastPaintKey = null;
 let lastPaintAt = 0;
 let regionObject = null;
+let regionModelBounds = null;
 
 function setStatus(message) { statusBox.textContent = message; }
 function boneByName(name) { return BONE_DEFS.find(b => b.name === name); }
@@ -147,6 +149,7 @@ function setRigEditingEnabled(enabled) {
   generateButton.disabled = !enabled;
   regionToggle.disabled = !enabled;
   regionDetectButton.disabled = !enabled;
+  for(const input of regionAxisInputs)input.disabled=!enabled;
 }
 
 function revokeOldModel() {
@@ -156,6 +159,7 @@ function revokeOldModel() {
   controls.enabled = true;
   regionTransform.detach();
   regionObject = null;
+  regionModelBounds = null;
   regionToggle.textContent = '範囲ボックスを表示';
   placeButton.textContent = '位置を置く：OFF';
   protectToggle.textContent = '固定領域を塗る：OFF';
@@ -272,6 +276,7 @@ function createRegionBox(){
   if(regionObject?.parent)regionObject.parent.remove(regionObject);
   regionTransform.detach();
   const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+  regionModelBounds=bounds.clone();
   const minSize=Math.max(size.length()*0.025,0.01);
   const boxHeight=Math.max(size.y*0.22,minSize),boxWidth=Math.max(size.x*0.42,minSize),boxDepth=Math.max(size.z*0.42,minSize);
   regionObject=new THREE.Group();regionObject.name='__HeadRegionSelectionBox';
@@ -281,7 +286,41 @@ function createRegionBox(){
   volume.name='__HeadRegionSelectionVolume';volume.renderOrder=30;regionObject.add(volume);
   modelRoot.add(regionObject);regionObject.visible=false;modelRoot.updateMatrixWorld(true);
   regionTransform.setMode(regionModeSelect.value);
+  syncRegionSliders();
 }
+
+function syncRegionSliders(){
+  if(!regionObject||!regionModelBounds)return;
+  const size=regionModelBounds.getSize(new THREE.Vector3());
+  for(const axis of ['x','y','z']){
+    const extent=Math.max(size[axis],1e-6);
+    const centerInput=document.querySelector(`[data-region-axis="center-${axis}"]`);
+    const sizeInput=document.querySelector(`[data-region-axis="size-${axis}"]`);
+    centerInput.value=String(THREE.MathUtils.clamp((regionObject.position[axis]-regionModelBounds.min[axis])/extent*100,0,100));
+    sizeInput.value=String(THREE.MathUtils.clamp(regionObject.scale[axis]/extent*100,1,100));
+    document.querySelector(`[data-region-output="center-${axis}"]`).textContent=`${Math.round(Number(centerInput.value))}%`;
+    document.querySelector(`[data-region-output="size-${axis}"]`).textContent=`${Math.round(Number(sizeInput.value))}%`;
+  }
+}
+
+function updateRegionFromSliders(){
+  if(!regionObject||!regionModelBounds)return;
+  if(!regionObject.visible)setRegionVisible(true);
+  const size=regionModelBounds.getSize(new THREE.Vector3());
+  for(const axis of ['x','y','z']){
+    const extent=Math.max(size[axis],1e-6);
+    const centerInput=document.querySelector(`[data-region-axis="center-${axis}"]`);
+    const sizeInput=document.querySelector(`[data-region-axis="size-${axis}"]`);
+    regionObject.position[axis]=regionModelBounds.min[axis]+extent*Number(centerInput.value)/100;
+    regionObject.scale[axis]=Math.max(extent*Number(sizeInput.value)/100,extent*0.01);
+    document.querySelector(`[data-region-output="center-${axis}"]`).textContent=`${Math.round(Number(centerInput.value))}%`;
+    document.querySelector(`[data-region-output="size-${axis}"]`).textContent=`${Math.round(Number(sizeInput.value))}%`;
+  }
+  modelRoot.updateMatrixWorld(true);
+  setStatus('範囲をスライダーで調整中です。紫色の選択は保持されます。新しい範囲を割り当てるときはボタンを押してください。');
+}
+
+for(const input of regionAxisInputs)input.addEventListener('input',updateRegionFromSliders);
 
 function setRegionVisible(visible){
   if(!regionObject||!modelRoot)return;
@@ -321,6 +360,7 @@ regionTransform.addEventListener('objectChange',()=>{
   if(!regionObject)return;
   const minSize=Math.max(modelLocalBounds().getSize(new THREE.Vector3()).length()*0.01,0.005);
   regionObject.scale.set(Math.max(Math.abs(regionObject.scale.x),minSize),Math.max(Math.abs(regionObject.scale.y),minSize),Math.max(Math.abs(regionObject.scale.z),minSize));
+  syncRegionSliders();
   setStatus('範囲箱を調整中です。既に割り当てた部位は保持されます。別の部位を追加するには箱の中の頂点を選択してください。');
 });
 
@@ -546,20 +586,21 @@ function makeAdjacency(geometry, vertexCount) {
 }
 
 function coincidentVertexGroups(positions, scale) {
-  const tolerance=Math.max(1e-6,scale*1e-6), toleranceSq=tolerance*tolerance;
-  const cells=new Map(), parent=Array.from({length:positions.length},(_,i)=>i);
+  const vertexCount=positions.length/3,tolerance=Math.max(1e-6,scale*1e-6), toleranceSq=tolerance*tolerance;
+  const cells=new Map(), parent=Array.from({length:vertexCount},(_,i)=>i);
   const root=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
   const key=(x,y,z)=>`${x},${y},${z}`;
-  for(let i=0;i<positions.length;i++){
-    const p=positions[i],cx=Math.floor(p.x/tolerance),cy=Math.floor(p.y/tolerance),cz=Math.floor(p.z/tolerance);
+  for(let i=0;i<vertexCount;i++){
+    const px=positions[i*3],py=positions[i*3+1],pz=positions[i*3+2];
+    const cx=Math.floor(px/tolerance),cy=Math.floor(py/tolerance),cz=Math.floor(pz/tolerance);
     for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)for(let z=-1;z<=1;z++){
       const list=cells.get(key(cx+x,cy+y,cz+z));if(!list)continue;
-      for(const j of list){if(p.distanceToSquared(positions[j])<=toleranceSq){let a=root(i),b=root(j);if(a!==b)parent[Math.max(a,b)]=Math.min(a,b);}}
+      for(const j of list){const dx=px-positions[j*3],dy=py-positions[j*3+1],dz=pz-positions[j*3+2];if(dx*dx+dy*dy+dz*dz<=toleranceSq){let a=root(i),b=root(j);if(a!==b)parent[Math.max(a,b)]=Math.min(a,b);}}
     }
     const k=key(cx,cy,cz);if(!cells.has(k))cells.set(k,[]);cells.get(k).push(i);
   }
   const groups=new Map();
-  for(let i=0;i<positions.length;i++){const r=root(i);if(!groups.has(r))groups.set(r,[]);groups.get(r).push(i);}
+  for(let i=0;i<vertexCount;i++){const r=root(i);if(!groups.has(r))groups.set(r,[]);groups.get(r).push(i);}
   return Array.from(groups.values()).filter(group=>group.length>1);
 }
 
@@ -693,7 +734,9 @@ async function loadAiSessions(ort){
 
 async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
-  if(!navigator.gpu)throw new Error('このブラウザーではWebGPUを使えません。PC版ChromeまたはEdgeで試してください。');
+  if(!navigator.gpu)throw new Error('このSafariではWebGPUが利用できません。Safari 26以降か、標準19関節の手動配置を使ってください。');
+  const adapter=await navigator.gpu.requestAdapter();
+  if(!adapter)throw new Error('この端末はWebGPU対応GPUを利用できません。標準19関節の手動配置を使ってください。');
   const ort=await import('./vendor/onnxruntime-web-1.31.1/ort.webgpu.bundle.min.js');
   const {encoder,embed,decoder}=await loadAiSessions(ort);
   setStatus('モデル表面から点と法線を抽出しています…');
@@ -842,53 +885,58 @@ function normalizeAllowedWeights(values,offset,boneOffset,boneCount,allowed,fall
   for(let b=0;b<boneCount;b++)if(allowed[boneOffset+b])values[offset+b]/=sum;
 }
 
-function generateMeshWeights(entry,bonesByName,rootSize){
+async function generateMeshWeights(entry,bonesByName,rootSize){
   const mesh=entry.mesh, geometry=entry.geometry.clone();
   geometry.deleteAttribute('skinIndex');geometry.deleteAttribute('skinWeight');
   const sourcePositions=geometry.attributes.position;
   const count=sourcePositions.count,boneCount=BONE_DEFS.length;
-  mesh.updateWorldMatrix(true,false);modelRoot.updateWorldMatrix(true,false);
-  const rootVertices=[];
-  for(let i=0;i<count;i++){
-    const p=new THREE.Vector3().fromBufferAttribute(sourcePositions,i).applyMatrix4(mesh.matrixWorld);
-    rootVertices.push(modelRoot.worldToLocal(p));
-  }
+  const rootVertices=entry.rootPositions;
   const indexByName=new Map(BONE_DEFS.map((bone,index)=>[bone.name,index]));
-  const segmentData=BONE_DEFS.map((bone,index)=>bone.parent&&indexByName.has(bone.parent)
-    ? {a:indexByName.get(bone.parent),b:index}:null).filter(Boolean);
+  const segmentData=BONE_DEFS.map((bone,index)=>{
+    if(!bone.parent||!indexByName.has(bone.parent))return null;
+    const a=indexByName.get(bone.parent),start=BONE_DEFS[a].position,end=bone.position;
+    const abx=end.x-start.x,aby=end.y-start.y,abz=end.z-start.z;
+    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz};
+  }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
   const segmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
   const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
+  const hitDistances=new Float32Array(segmentData.length),hitParameters=new Float32Array(segmentData.length);
   for(let v=0;v<count;v++){
-    const p=rootVertices[v],hits=[];
+    if(v>0&&v%4096===0){setStatus(`ウェイトを計算しています… ${Math.floor(v/count*100)}%`);await new Promise(resolve=>requestAnimationFrame(resolve));}
+    const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2];
+    let primaryIndex=-1,primaryT=0,nearestDistance=Infinity;
     for(let s=0;s<segmentData.length;s++){
-      const seg=segmentData[s],a=BONE_DEFS[seg.a].position,b=BONE_DEFS[seg.b].position,ab=b.clone().sub(a);
-      const t=ab.lengthSq()>1e-12?THREE.MathUtils.clamp(p.clone().sub(a).dot(ab)/ab.lengthSq(),0,1):0;
-      const closest=a.clone().addScaledVector(ab,t);
-      hits.push({index:s,t,distance:p.distanceTo(closest)});
+      const seg=segmentData[s],dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
+      const t=seg.lengthSq>1e-12?THREE.MathUtils.clamp((dx*seg.abx+dy*seg.aby+dz*seg.abz)/seg.lengthSq,0,1):0;
+      const cx=seg.ax+seg.abx*t,cy=seg.ay+seg.aby*t,cz=seg.az+seg.abz*t;
+      const ox=px-cx,oy=py-cy,oz=pz-cz,distance=Math.sqrt(ox*ox+oy*oy+oz*oz);
+      hitDistances[s]=distance;hitParameters[s]=t;
+      if(distance<nearestDistance){nearestDistance=distance;primaryIndex=s;primaryT=t;}
     }
-    hits.sort((a,b)=>a.distance-b.distance);
-    const primary=hits[0],base=segmentData[primary.index],offset=v*boneCount;
-    dense[offset+base.a]+=1-primary.t;dense[offset+base.b]+=primary.t;
+    const base=segmentData[primaryIndex],offset=v*boneCount;
+    dense[offset+base.a]+=1-primaryT;dense[offset+base.b]+=primaryT;
     allowedInfluences[offset+base.a]=1;allowedInfluences[offset+base.b]=1;
-    fallbackBones[v]=primary.t<0.5?base.a:base.b;
-    let secondary=null,bestGap=Infinity;
-    for(const s of segmentAdj[primary.index]){const hit=hits.find(item=>item.index===s);const gap=hit.distance-primary.distance;if(gap<bestGap){bestGap=gap;secondary=hit;}}
-    if(secondary&&bestGap<=maxGap){
-      const seg=segmentData[secondary.index],amount=Math.exp(-(bestGap*bestGap)/(2*sigma*sigma));
-      dense[offset+seg.a]+=amount*(1-secondary.t);dense[offset+seg.b]+=amount*secondary.t;
+    fallbackBones[v]=primaryT<0.5?base.a:base.b;
+    let secondaryIndex=-1,bestGap=Infinity;
+    for(const candidate of segmentAdj[primaryIndex]){const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}}
+    if(secondaryIndex>=0&&bestGap<=maxGap){
+      const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex],amount=Math.exp(-(bestGap*bestGap)/(2*sigma*sigma));
+      dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;
     }
     normalizeWeights(dense,offset,boneCount);
   }
 
-  const adjacency=makeAdjacency(geometry,count);
-  const groups=coincidentVertexGroups(rootVertices,rootSize);
+  const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
+  const adjacency=lightweightPhoneMode?null:makeAdjacency(geometry,count);
+  const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
   let next=new Float32Array(dense.length);
-  for(let iteration=0;iteration<4;iteration++){
+  for(let iteration=0;adjacency&&iteration<4;iteration++){
     for(let v=0;v<count;v++){
+      if(v>0&&v%8192===0)await new Promise(resolve=>requestAnimationFrame(resolve));
       const offset=v*boneCount,neighbors=adjacency[v];
       if(!neighbors.length){next.set(dense.subarray(offset,offset+boneCount),offset);continue;}
       const self=.5,other=.5/neighbors.length;
@@ -942,7 +990,7 @@ function generateMeshWeights(entry,bonesByName,rootSize){
   return geometry;
 }
 
-function generateRigAndWeights(){
+async function generateRigAndWeights(){
   if(!modelRoot||modelEntries.length===0)return;
   const missing=BONE_DEFS.filter(b=>!b.position);
   if(missing.length){activeBoneName=missing[0].name;renderBoneList();setStatus(`未配置の関節があります。${missing[0].label}から配置してください。`);return;}
@@ -969,7 +1017,7 @@ function generateRigAndWeights(){
     const skeleton=new THREE.Skeleton(bones);skeleton.calculateInverses();
     const bounds=modelLocalBounds(),rootSize=bounds.getSize(new THREE.Vector3()).length();
     for(const entry of modelEntries){
-      const old=entry.mesh,parent=old.parent,geometry=generateMeshWeights(entry,bones,rootSize);
+      const old=entry.mesh,parent=old.parent,geometry=await generateMeshWeights(entry,bones,rootSize);
       const skinned=new THREE.SkinnedMesh(geometry,entry.material);
       skinned.name=old.name;skinned.castShadow=old.castShadow;skinned.receiveShadow=old.receiveShadow;
       skinned.frustumCulled=false;skinned.matrix.copy(old.matrix);skinned.matrixAutoUpdate=old.matrixAutoUpdate;
@@ -985,7 +1033,9 @@ function generateRigAndWeights(){
     modelRoot.updateMatrixWorld(true);
     exportButton.disabled=false;
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
-    setStatus(`リギングを生成しました。${modelEntries.length}個のMeshを処理し、部位指定した${assignedCount.toLocaleString()}頂点へ指定ボーンのウェイトを適用しました。動作を確認してGLBを保存してください。`);
+    const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
+    const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個の平滑化を省いた軽量計算を使いました。`:'';
+    setStatus(`リギングを生成しました。${modelEntries.length}個のMeshを処理し、部位指定した${assignedCount.toLocaleString()}頂点へ指定ボーンのウェイトを適用しました。${phoneNote}動作を確認してGLBを保存してください。`);
   }catch(error){
     console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
   }

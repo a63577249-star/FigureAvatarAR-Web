@@ -487,10 +487,17 @@ async function loadAiSessions(ort){
     wasm:new URL('ort-wasm-simd-threaded.asyncify.wasm',ortRuntimeBase).href
   };
   setStatus('AIモデルを読み込んでいます（初回は約455MB。ブラウザー内で実行します）…');
-  const encoder=await ort.InferenceSession.create(base+'encoder_q8.onnx',options);
+  const encoder=await ort.InferenceSession.create(base+'encoder_q8.onnx',{
+    ...options,
+    externalData:[{path:'encoder_q8.onnx.data',data:base+'encoder_q8.onnx.data'}]
+  });
   setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');
   const embed=await ort.InferenceSession.create(base+'embed.onnx',options);
-  const decoder=await ort.InferenceSession.create(base+'decoder_q8.onnx',options);
+  setStatus('AIモデルを読み込んでいます…（デコーダーと外部データ）');
+  const decoder=await ort.InferenceSession.create(base+'decoder_q8.onnx',{
+    ...options,
+    externalData:[{path:'decoder_q8.onnx.data',data:base+'decoder_q8.onnx.data'}]
+  });
   aiSessions={ort,encoder,embed,decoder};
   return aiSessions;
 }

@@ -481,7 +481,11 @@ async function loadAiSessions(ort){
   if(aiSessions)return aiSessions;
   const base='https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu/resolve/main/';
   const options={executionProviders:['webgpu'],graphOptimizationLevel:'all'};
-  ort.env.wasm.wasmPaths=new URL('./vendor/onnxruntime-web-1.31.1/',import.meta.url).href;
+  const ortRuntimeBase=new URL('./vendor/onnxruntime-web-1.31.1/',import.meta.url);
+  ort.env.wasm.wasmPaths={
+    mjs:new URL('ort-wasm-simd-threaded.asyncify.js',ortRuntimeBase).href,
+    wasm:new URL('ort-wasm-simd-threaded.asyncify.wasm',ortRuntimeBase).href
+  };
   setStatus('AIモデルを読み込んでいます（初回は約455MB。ブラウザー内で実行します）…');
   const encoder=await ort.InferenceSession.create(base+'encoder_q8.onnx',options);
   setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');
@@ -494,7 +498,7 @@ async function loadAiSessions(ort){
 async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
   if(!navigator.gpu)throw new Error('このブラウザーではWebGPUを使えません。PC版ChromeまたはEdgeで試してください。');
-  const ort=await import('./vendor/onnxruntime-web-1.31.1/ort.webgpu.bundle.min.mjs');
+  const ort=await import('./vendor/onnxruntime-web-1.31.1/ort.webgpu.bundle.min.js');
   const {encoder,embed,decoder}=await loadAiSessions(ort);
   setStatus('モデル表面から点と法線を抽出しています…');
   const cloud=sampleModelSurface(16384);

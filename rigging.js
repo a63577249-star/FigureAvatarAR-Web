@@ -734,19 +734,23 @@ async function loadAiSessions(ort,executionProvider='webgpu'){
 
 async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
+  const isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
   let executionProvider='webgpu',adapter=null;
-  try{if(navigator.gpu)adapter=await navigator.gpu.requestAdapter();}catch(error){console.warn('WebGPU adapter check failed; offering CPU inference.',error);}
+  try{if(navigator.gpu)adapter=await navigator.gpu.requestAdapter();}catch(error){console.warn('WebGPU adapter check failed.',error);}
   if(!adapter){
+    if(isMobile)throw new Error('このスマートフォンではWebGPUを利用できません。メモリ不足でSafariが終了するのを防ぐため、スマートフォンでは重いCPU推定を開始しません。iOS/Safariを更新して再読み込みしてください。AIを使わない標準19関節の手動配置とウェイト生成は利用できます。');
     const proceed=window.confirm('この端末ではWebGPUを利用できません。AI骨格推定をCPU（WebAssembly）で試しますか？初回は約455MBを取得し、処理にかなり時間がかかる場合があります。Safariがメモリ不足でページを再読み込みする可能性もあります。キャンセルしても、標準19関節の手動配置とウェイト生成は利用できます。');
     if(!proceed)throw new Error('CPUでのAI推定を中止しました。標準19関節の手動配置とウェイト生成はそのまま使えます。');
     executionProvider='wasm';
   }
   const ort=await import('./vendor/onnxruntime-web-1.31.1/ort.webgpu.bundle.min.js');
   const {encoder,embed,decoder}=await loadAiSessions(ort,executionProvider);
-  setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':'モデル表面から点と法線を抽出しています…');
-  const cloud=sampleModelSurface(16384);
-  const vertexTensor=new ort.Tensor('float32',cloud.vertices,[1,16384,3]);
-  const normalTensor=new ort.Tensor('float32',cloud.normals,[1,16384,3]);
+  const surfaceSampleCount=isMobile?4096:16384;
+  setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':`${isMobile?'スマートフォン向けに点数を抑えて':''}モデル表面から点と法線を抽出しています…`);
+  const cloud=sampleModelSurface(surfaceSampleCount);
+  const vertexTensor=new ort.Tensor('float32',cloud.vertices,[1,surfaceSampleCount,3]);
+  const normalTensor=new ort.Tensor('float32',cloud.normals,[1,surfaceSampleCount,3]);
   const encoderInputs={};
   const vertexInput=encoder.inputNames.find(name=>/vertices|points/i.test(name))||encoder.inputNames[0];
   const normalInput=encoder.inputNames.find(name=>/normals/i.test(name))||encoder.inputNames[1];

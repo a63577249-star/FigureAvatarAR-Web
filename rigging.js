@@ -467,11 +467,13 @@ function sampleModelSurface(pointCount=16384) {
   return {vertices,normals:sampledNormals,center,longest};
 }
 
-function allowedAiToken(logits,coordinateCount,segmentCount,branchPending){
-  const vocab=267;
+function allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates){
   const candidates=[];
   for(let token=0;token<256;token++)candidates.push(token);
-  if(coordinateCount===0&&segmentCount>0&&!branchPending){candidates.push(256,258);}
+  if(branchCoordinatesRemaining===0&&coordinateCount%3===0){
+    candidates.push(256,260,261,262);
+    if(hasCoordinates)candidates.push(258);
+  }
   let best=candidates[0],score=-Infinity;
   for(const token of candidates){const value=logits[token];if(value>score){score=value;best=token;}}
   return best;
@@ -547,21 +549,28 @@ async function predictAiSkeleton(){
     if(!decoded[outputName])throw new Error(`AIモデルのキャッシュ出力がありません: ${outputName}`);
     cache[inputName]=decoded[outputName];
   }
-  const records=[];
-  let coords=[],branchPending=false;
+  const tokens=[];
+  let coordinateCount=0,branchCoordinatesRemaining=0,completedJoints=0,hasCoordinates=false;
   for(let step=0;step<512;step++){
     const logitsTensor=decoded[logitsName],vocab=267;
     const sequenceLength=logitsTensor.dims[1];
     const logits=logitsTensor.data.subarray((sequenceLength-1)*vocab,sequenceLength*vocab);
-    const token=allowedAiToken(logits,coords.length,records.length,branchPending);
-    if(token===258)break;
-    if(token===256){branchPending=true;}
-    else{
-      coords.push(token);
-      if(coords.length===6){records.push({coordinates:coords,branch:branchPending});coords=[];branchPending=false;}
+    const token=allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates);
+    if(token===258){tokens.push(token);break;}
+    tokens.push(token);
+    if(token<256){
+      coordinateCount++;hasCoordinates=true;
+      if(branchCoordinatesRemaining>0){
+        branchCoordinatesRemaining--;
+        if(branchCoordinatesRemaining===0)completedJoints++;
+      }else if(coordinateCount%3===0)completedJoints++;
+    }else if(token===256){
+      coordinateCount=0;branchCoordinatesRemaining=6;
+    }else if(token===260||token===261||token===262){
+      coordinateCount=0;
     }
-    if(records.length>=64&&coords.length===0)break;
-    if(step%4===0){setStatus(`AIがボーンを推定しています… ${records.length}本`);await new Promise(resolve=>setTimeout(resolve,0));}
+    if(completedJoints>=96&&coordinateCount%3===0&&branchCoordinatesRemaining===0)break;
+    if(step%4===0){setStatus(`AIが骨格を推定しています… ${completedJoints}関節`);await new Promise(resolve=>setTimeout(resolve,0));}
     const tokenInput=new ort.Tensor('int64',new BigInt64Array([BigInt(token)]),[1,1]);
     const tokenEmbedding=await embed.run({[embed.inputNames[0]]:tokenInput});
     const nextEmbedding=tokenEmbedding[embed.outputNames[0]];
@@ -575,32 +584,50 @@ async function predictAiSkeleton(){
       cache[name]=decoded[outputName];
     }
   }
-  if(!records.length)throw new Error('AIがボーンを生成できませんでした。モデルの向きや形状を確認してください。');
-  return {records,center:cloud.center,longest:cloud.longest};
+  if(!completedJoints)throw new Error('AIが骨格を生成できませんでした。モデルの向きや形状を確認してください。');
+  return {tokens,center:cloud.center,longest:cloud.longest};
 }
 
-function buildAiBoneDefs(records,center,longest){
-  const nodes=[];
-  const tolerance=longest*0.035;
+function buildAiBoneDefs(tokens,center,longest){
+  const joints=[],parentPoints=[];
   const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
     .multiplyScalar(longest*0.5).add(center);
-  const findNode=point=>{
-    let best=null,bestDistance=tolerance;
-    for(const node of nodes){const distance=node.position.distanceTo(point);if(distance<bestDistance){best=node;bestDistance=distance;}}
-    return best;
-  };
-  for(const record of records){
-    const parentPoint=decodePoint(record.coordinates.slice(0,3));
-    const jointPoint=decodePoint(record.coordinates.slice(3,6));
-    let parent=findNode(parentPoint);
-    if(!parent){
-      parent={name:`ai_joint_${String(nodes.length+1).padStart(2,'0')}`,label:`AI関節 ${nodes.length+1}`,parent:null,position:parentPoint,surfacePoint:null,surfaceNormal:null,bone:null,marker:null};
-      nodes.push(parent);
+  let branchPending=false,lastJoint=null;
+  for(let i=0;i<tokens.length;){
+    const token=tokens[i];
+    if(token===258)break;
+    if(token===256){branchPending=true;lastJoint=null;i++;continue;}
+    if(token===260||token===261||token===262){i++;continue;}
+    if(token<0||token>=256)throw new Error(`骨格トークンを解釈できません: ${token}`);
+    if(branchPending){
+      if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
+      parentPoints.push(decodePoint(tokens.slice(i,i+3)));
+      lastJoint=decodePoint(tokens.slice(i+3,i+6));
+      joints.push(lastJoint);i+=6;branchPending=false;
+    }else{
+      if(i+2>=tokens.length||tokens.slice(i,i+3).some(value=>value<0||value>=256))break;
+      const current=decodePoint(tokens.slice(i,i+3));
+      parentPoints.push(lastJoint?lastJoint.clone():current.clone());
+      joints.push(current);lastJoint=current;
+      i+=3;
     }
-    const child={name:`ai_joint_${String(nodes.length+1).padStart(2,'0')}`,label:`AI関節 ${nodes.length+1}`,parent:parent.name,position:jointPoint,surfacePoint:null,surfaceNormal:null,bone:null,marker:null};
-    nodes.push(child);
   }
-  return nodes;
+  if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
+  const parents=new Array(joints.length).fill(-1);
+  for(let joint=1;joint<joints.length;joint++){
+    let best=0,bestDistance=Infinity;
+    for(let candidate=joint-1;candidate>=0;candidate--){
+      const distance=joints[candidate].distanceToSquared(parentPoints[joint]);
+      if(distance<bestDistance){bestDistance=distance;best=candidate;}
+    }
+    parents[joint]=best;
+  }
+  return joints.map((position,index)=>({
+    name:`ai_joint_${String(index+1).padStart(2,'0')}`,
+    label:`AI関節 ${index+1}`,
+    parent:parents[index]<0?null:`ai_joint_${String(parents[index]+1).padStart(2,'0')}`,
+    position,surfacePoint:null,surfaceNormal:null,bone:null,marker:null
+  }));
 }
 
 async function runAiAutoRig(){
@@ -608,13 +635,13 @@ async function runAiAutoRig(){
   aiRigButton.disabled=true;
   try{
     const prediction=await predictAiSkeleton();
-    const nodes=buildAiBoneDefs(prediction.records,prediction.center,prediction.longest);
+    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest);
     if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');
     BONE_DEFS.splice(0,BONE_DEFS.length,...nodes);
     rigMode='ai';activeBoneName=BONE_DEFS[0].name;
     updateMarkers();renderBoneList();
     autoButton.textContent='標準19関節に戻す';
-    setStatus(`AIが${prediction.records.length}本のボーン（${nodes.length}関節）を推定しました。既存のウェイト生成で続けられます。`);
+    setStatus(`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
   }catch(error){
     console.error(error);
     setStatus(`AI自動推定に失敗しました: ${error.message||error}`);

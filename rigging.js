@@ -483,7 +483,7 @@ async function loadAiSessions(ort){
   const options={executionProviders:['webgpu'],graphOptimizationLevel:'all'};
   const ortRuntimeBase=new URL('./vendor/onnxruntime-web-1.31.1/',import.meta.url);
   ort.env.wasm.wasmPaths={
-    mjs:new URL('ort-wasm-simd-threaded.asyncify.js',ortRuntimeBase).href,
+    mjs:new URL('ort-wasm-simd-threaded.asyncify.mjs',ortRuntimeBase).href,
     wasm:new URL('ort-wasm-simd-threaded.asyncify.wasm',ortRuntimeBase).href
   };
   setStatus('AIモデルを読み込んでいます（初回は約455MB。ブラウザー内で実行します）…');

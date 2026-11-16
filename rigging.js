@@ -736,10 +736,13 @@ async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
   const isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
     ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  const webGpuApiAvailable=!!navigator.gpu;
   let executionProvider='webgpu',adapter=null;
   try{if(navigator.gpu)adapter=await navigator.gpu.requestAdapter();}catch(error){console.warn('WebGPU adapter check failed.',error);}
   if(!adapter){
-    if(isMobile)throw new Error('このスマートフォンではWebGPUを利用できません。メモリ不足でSafariが終了するのを防ぐため、スマートフォンでは重いCPU推定を開始しません。iOS/Safariを更新して再読み込みしてください。AIを使わない標準19関節の手動配置とウェイト生成は利用できます。');
+    if(isMobile)throw new Error(webGpuApiAvailable
+      ?'SafariはWebGPU APIを公開していますが、使用できるGPUアダプターを返しませんでした。Safariアプリで直接ページを開き、iOSを更新して再読み込みしてください。設定に「WebGPU」機能フラグがあれば有効にしてください。'
+      :'このブラウザーはWebGPU APIを公開していません。Safariアプリで直接開き、iOS 26以降へ更新してください。設定 > アプリ > Safari > 詳細 > 機能フラグにWebGPUがあれば有効にして、ページを再読み込みしてください。');
     const proceed=window.confirm('この端末ではWebGPUを利用できません。AI骨格推定をCPU（WebAssembly）で試しますか？初回は約455MBを取得し、処理にかなり時間がかかる場合があります。Safariがメモリ不足でページを再読み込みする可能性もあります。キャンセルしても、標準19関節の手動配置とウェイト生成は利用できます。');
     if(!proceed)throw new Error('CPUでのAI推定を中止しました。標準19関節の手動配置とウェイト生成はそのまま使えます。');
     executionProvider='wasm';
@@ -872,7 +875,9 @@ async function runAiAutoRig(){
     setStatus(`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
   }catch(error){
     console.error(error);
-    setStatus(`AI自動推定に失敗しました: ${error.message||error} 標準19関節の手動配置とウェイト生成は続けて利用できます。`);
+    const detail=error.message||String(error);
+    const manualNote=detail.includes('手動配置')||detail.includes('ウェイト生成')?'':' 標準19関節の手動配置とウェイト生成は続けて利用できます。';
+    setStatus(`AI自動推定に失敗しました: ${detail}${manualNote}`);
   }finally{aiRigButton.disabled=false;}
 }
 aiRigButton.addEventListener('click',runAiAutoRig);

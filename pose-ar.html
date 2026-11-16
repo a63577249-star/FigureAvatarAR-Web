@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>モデル切替・関節操作・AR | FigureAvatarAR</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#10151f;color:#edf2fa}*{box-sizing:border-box}body{margin:0;min-height:100vh}header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 16px;background:#171f2d;border-bottom:1px solid #ffffff1c}header h1{margin:0;font-size:17px}a{color:#b8d7ff}main{display:grid;grid-template-columns:minmax(270px,340px) 1fr;min-height:calc(100vh - 50px)}aside{padding:16px;overflow:auto;background:#141b27;border-right:1px solid #ffffff1c}.group{margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #ffffff1a}.group h2{margin:0 0 9px;font-size:14px}.hint{font-size:12px;line-height:1.5;color:#b9c5d5}input,select,button{width:100%;min-height:42px;margin:4px 0;border:1px solid #536278;border-radius:9px;padding:9px 11px;background:#222d3d;color:white;font:inherit}input[type=range]{padding:0;accent-color:#79b8ff}button{cursor:pointer;font-weight:650;background:#284a70;border-color:#5a8abd}button:disabled{opacity:.45;cursor:not-allowed}.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}#status{padding:10px;border-radius:9px;background:#202b3b;font-size:12px;line-height:1.5;overflow-wrap:anywhere}#viewport{position:relative;min-height:70vh;overflow:hidden;background:radial-gradient(ellipse at 50% 40%,#263347,#111722 72%);touch-action:none}#viewport canvas{display:block;width:100%;height:100%}#help{position:absolute;left:12px;bottom:12px;padding:9px 12px;border-radius:10px;background:#101827d9;color:#dbe7f4;font-size:12px;pointer-events:none}#ar-link{display:block;text-align:center;margin-top:8px;padding:10px;border-radius:9px;background:#fff;color:#172033;font-weight:700;text-decoration:none}#ar-link[aria-disabled=true]{opacity:.5;pointer-events:none}@media(max-width:760px){main{display:flex;flex-direction:column}#viewport{order:0;height:52vh;min-height:320px}aside{order:1;max-height:none;overflow:visible}header{padding-top:max(10px,env(safe-area-inset-top))}}
+  </style>
+  <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.187.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.187.0/examples/jsm/"}}</script>
+</head>
+<body>
+  <header><h1>モデル切替・関節操作・AR</h1><a href="./index.html">表示ページへ戻る</a></header>
+  <main>
+    <aside>
+      <section class="group"><h2>1. リギング済みモデルを読み込む</h2><input id="files" type="file" accept=".glb,model/gltf-binary" multiple><p class="hint">「モデル追加・ボーン設定」で保存したGLBを選んでください。複数選択すると、下の一覧から切り替えられます。ファイルはこの端末のブラウザー内で処理し、送信しません。</p><label for="models">表示モデル</label><select id="models" disabled></select></section>
+      <section class="group"><h2>2. 関節と大きさを調整</h2><label for="joint">関節</label><select id="joint" disabled></select><label>X角度 <output id="xv">0°</output></label><input id="x" type="range" min="-90" max="90" value="0" step="1" disabled><label>Y角度 <output id="yv">0°</output></label><input id="y" type="range" min="-90" max="90" value="0" step="1" disabled><label>Z角度 <output id="zv">0°</output></label><input id="z" type="range" min="-90" max="90" value="0" step="1" disabled><div class="row"><button id="reset-joint" disabled>この関節を戻す</button><button id="reset-all" disabled>全身を初期化</button></div><label for="scale">モデルの大きさ <output id="scale-value">1.00倍</output></label><input id="scale" type="range" min="0.01" max="2" value="1" step="0.01" disabled><button id="drag-toggle" class="secondary" disabled>関節をつかんで動かす：OFF</button><p class="hint">直接操作をONにすると青い関節点をドラッグできます。その間、視点回転は停止します。</p></section>
+      <section class="group"><h2>3. いまの姿勢でAR表示</h2><button id="make-ar" disabled>現在のモデル・姿勢でARデータを準備</button><a id="ar-link" rel="ar" aria-disabled="true">準備後にここからARを開く</a><p class="hint">選んだモデルと現在の関節・大きさを静止メッシュに変換してARへ渡します。姿勢やモデルを変えたら、ARデータを作り直してください。</p></section>
+      <div id="status" role="status">リギング済みGLBを選んでください。</div>
+    </aside>
+    <section id="viewport" aria-label="3Dモデル表示"><div id="help">GLBを読み込むと3D表示されます。ドラッグで視点を回転、ピンチで拡大縮小。</div></section>
+  </main>
+  <script type="module" src="./pose-ar.js?v=1"></script>
+</body>
+</html>

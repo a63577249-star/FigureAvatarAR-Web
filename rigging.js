@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
@@ -30,10 +31,14 @@ const viewHelp = document.querySelector('#view-help');
 const boneDepth = document.querySelector('#bone-depth');
 const boneDepthValue = document.querySelector('#bone-depth-value');
 const protectedBoneSelect = document.querySelector('#protected-bone');
+const regionWeightMode = document.querySelector('#region-weight-mode');
 const protectBrush = document.querySelector('#protect-brush');
 const protectBrushValue = document.querySelector('#protect-brush-value');
 const protectToggle = document.querySelector('#protect-toggle');
 const clearProtectedButton = document.querySelector('#clear-protected');
+const regionToggle = document.querySelector('#region-toggle');
+const regionModeSelect = document.querySelector('#region-mode');
+const regionDetectButton = document.querySelector('#region-detect');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#121a27');
@@ -62,6 +67,10 @@ const markerGroup = new THREE.Group();
 scene.add(markerGroup);
 const protectedOverlayGroup = new THREE.Group();
 scene.add(protectedOverlayGroup);
+const regionTransform = new TransformControls(camera, renderer.domElement);
+regionTransform.setSpace('local');
+regionTransform.setSize(0.8);
+scene.add(regionTransform.getHelper());
 
 let modelRoot = null;
 let modelEntries = [];
@@ -77,6 +86,7 @@ let protectMode = false;
 let protectedVertices = new Map();
 let lastPaintKey = null;
 let lastPaintAt = 0;
+let regionObject = null;
 
 function setStatus(message) { statusBox.textContent = message; }
 function boneByName(name) { return BONE_DEFS.find(b => b.name === name); }
@@ -127,7 +137,7 @@ function refreshProtectedBoneOptions() {
   const preferred=rigMode==='template'?'head':BONE_DEFS.reduce((highest,bone)=>!highest||bone.position?.y>highest.position?.y?bone:highest,null)?.name;
   protectedBoneSelect.value=BONE_DEFS.some(bone=>bone.name===previous)?previous:(preferred||'');
   const ready=Boolean(modelRoot&&BONE_DEFS.some(bone=>bone.position));
-  protectedBoneSelect.disabled=!ready;protectBrush.disabled=!modelRoot;protectToggle.disabled=!ready;clearProtectedButton.disabled=protectedVertices.size===0;
+  protectedBoneSelect.disabled=!ready;protectBrush.disabled=!modelRoot;protectToggle.disabled=!ready;clearProtectedButton.disabled=![...protectedVertices.values()].some(assignments=>assignments.size>0);
 }
 renderBoneList();
 
@@ -135,6 +145,8 @@ function setRigEditingEnabled(enabled) {
   placeButton.disabled = !enabled;
   autoButton.disabled = !enabled;
   generateButton.disabled = !enabled;
+  regionToggle.disabled = !enabled;
+  regionDetectButton.disabled = !enabled;
 }
 
 function revokeOldModel() {
@@ -142,6 +154,9 @@ function revokeOldModel() {
   protectMode = false;
   protectedVertices = new Map();
   controls.enabled = true;
+  regionTransform.detach();
+  regionObject = null;
+  regionToggle.textContent = '範囲ボックスを表示';
   placeButton.textContent = '位置を置く：OFF';
   protectToggle.textContent = '固定領域を塗る：OFF';
   if (modelRoot) {
@@ -229,6 +244,7 @@ async function loadModel(files) {
         if(sourceNormals){const n=new THREE.Vector3().fromBufferAttribute(sourceNormals,i).applyMatrix3(normalToRoot).normalize();entry.rootNormals.set(n.toArray(),i*3);}
       }
     }
+    createRegionBox();
     fitCamera();
     setRigEditingEnabled(true);
     if (document.querySelector('#auto-rig').checked) placeStandardRig();
@@ -241,23 +257,76 @@ async function loadModel(files) {
 }
 
 function modelLocalBounds() {
-  const worldBox = new THREE.Box3().setFromObject(modelRoot);
+  modelRoot.updateMatrixWorld(true);
   const inverseRoot = modelRoot.matrixWorld.clone().invert();
-  const localBox = new THREE.Box3();
-  for (let i=0; i<8; i++) {
-    const point = new THREE.Vector3(
-      i&1 ? worldBox.max.x : worldBox.min.x,
-      i&2 ? worldBox.max.y : worldBox.min.y,
-      i&4 ? worldBox.max.z : worldBox.min.z
-    ).applyMatrix4(inverseRoot);
-    localBox.expandByPoint(point);
+  const localBox = new THREE.Box3().makeEmpty();
+  for(const entry of modelEntries){
+    if(!entry.geometry.boundingBox)entry.geometry.computeBoundingBox();
+    const meshToRoot=inverseRoot.clone().multiply(entry.mesh.matrixWorld);
+    localBox.union(entry.geometry.boundingBox.clone().applyMatrix4(meshToRoot));
   }
   return localBox;
 }
 
+function createRegionBox(){
+  if(regionObject?.parent)regionObject.parent.remove(regionObject);
+  regionTransform.detach();
+  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+  const minSize=Math.max(size.length()*0.025,0.01);
+  const boxHeight=Math.max(size.y*0.22,minSize),boxWidth=Math.max(size.x*0.42,minSize),boxDepth=Math.max(size.z*0.42,minSize);
+  regionObject=new THREE.Group();regionObject.name='__HeadRegionSelectionBox';
+  regionObject.position.set(center.x,bounds.max.y-boxHeight/2,center.z);
+  regionObject.scale.set(boxWidth,boxHeight,boxDepth);
+  const volume=new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1,1,1)),new THREE.LineBasicMaterial({color:0x55d6f4,transparent:true,opacity:0.95,depthTest:false}));
+  volume.name='__HeadRegionSelectionVolume';volume.renderOrder=30;regionObject.add(volume);
+  modelRoot.add(regionObject);regionObject.visible=false;modelRoot.updateMatrixWorld(true);
+  regionTransform.setMode(regionModeSelect.value);
+}
+
+function setRegionVisible(visible){
+  if(!regionObject||!modelRoot)return;
+  regionObject.visible=visible;
+  if(visible){regionTransform.attach(regionObject);regionTransform.setMode(regionModeSelect.value);regionToggle.textContent='範囲ボックスを隠す';}
+  else{regionTransform.detach();regionToggle.textContent='範囲ボックスを表示';}
+}
+
+function detectVerticesInRegion(){
+  if(!regionObject||!modelRoot)return;
+  const boneName=protectedBoneSelect.value,strength=Number(regionWeightMode.value);
+  if(!boneName){setStatus('先に割り当て先のボーンを選択してください。');return;}
+  modelRoot.updateMatrixWorld(true);
+  const center=regionObject.position,half=regionObject.scale.clone().multiplyScalar(0.5);
+  const min=center.clone().sub(half),max=center.clone().add(half);
+  let total=0;
+  for(const entry of modelEntries){
+    const additions=new Map(),assignment={boneName,strength};
+    const positions=entry.rootPositions;
+    for(let i=0;i<positions.length/3;i++){
+      const x=positions[i*3],y=positions[i*3+1],z=positions[i*3+2];
+      if(x>=min.x&&x<=max.x&&y>=min.y&&y<=max.y&&z>=min.z&&z<=max.z){additions.set(i,assignment);total++;}
+    }
+    if(additions.size){let assignments=protectedVertices.get(entry);if(!assignments){assignments=new Map();protectedVertices.set(entry,assignments);}for(const [vertex,value] of additions)assignments.set(vertex,value);updateProtectedOverlay(entry);}
+  }
+  refreshProtectedBoneOptions();
+  const allCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
+  setStatus(total?`範囲内の${total.toLocaleString()}頂点を「${protectedBoneSelect.selectedOptions[0]?.textContent}」へ${Math.round(strength*100)}%割り当てました。選択部位は紫色です。ほかの部位も箱を移して追加できます（計${allCount.toLocaleString()}頂点）。`:'箱の中に頂点がありません。箱の位置や大きさを調整してください。');
+}
+
+regionToggle.addEventListener('click',()=>setRegionVisible(!regionObject?.visible));
+regionModeSelect.addEventListener('change',()=>{regionTransform.setMode(regionModeSelect.value);});
+regionDetectButton.addEventListener('click',detectVerticesInRegion);
+regionTransform.addEventListener('mouseDown',()=>{controls.enabled=false;});
+regionTransform.addEventListener('mouseUp',()=>{controls.enabled=!placeMode&&!protectMode;});
+regionTransform.addEventListener('objectChange',()=>{
+  if(!regionObject)return;
+  const minSize=Math.max(modelLocalBounds().getSize(new THREE.Vector3()).length()*0.01,0.005);
+  regionObject.scale.set(Math.max(Math.abs(regionObject.scale.x),minSize),Math.max(Math.abs(regionObject.scale.y),minSize),Math.max(Math.abs(regionObject.scale.z),minSize));
+  setStatus('範囲箱を調整中です。既に割り当てた部位は保持されます。別の部位を追加するには箱の中の頂点を選択してください。');
+});
+
 function fitCamera() {
   modelRoot.updateMatrixWorld(true);
-  const box = new THREE.Box3().setFromObject(modelRoot);
+  const box = modelLocalBounds().applyMatrix4(modelRoot.matrixWorld);
   const size = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const maxSize = Math.max(size.x,size.y,size.z,0.1);
@@ -351,14 +420,14 @@ function pickSurface(clientX,clientY) {
 function updateProtectedOverlay(entry) {
   const previous=entry.protectedOverlay;
   if(previous){protectedOverlayGroup.remove(previous);previous.geometry.dispose();previous.material.dispose();entry.protectedOverlay=null;}
-  const indices=protectedVertices.get(entry);
-  if(!indices?.size)return;
+  const assignments=protectedVertices.get(entry);
+  if(!assignments?.size)return;
   modelRoot.updateMatrixWorld(true);
   const positions=[];
-  for(const index of indices){const vertex=new THREE.Vector3().fromBufferAttribute(entry.geometry.attributes.position,index);positions.push(...entry.mesh.localToWorld(vertex).toArray());}
+  for(const index of assignments.keys()){const vertex=new THREE.Vector3().fromBufferAttribute(entry.geometry.attributes.position,index);positions.push(...entry.mesh.localToWorld(vertex).toArray());}
   const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
   const size=Math.max(modelLocalBounds().getSize(new THREE.Vector3()).length()*0.012,0.01);
-  const points=new THREE.Points(geometry,new THREE.PointsMaterial({color:0xff9e57,size,sizeAttenuation:true,depthTest:false}));points.renderOrder=20;protectedOverlayGroup.add(points);entry.protectedOverlay=points;
+  const points=new THREE.Points(geometry,new THREE.PointsMaterial({color:0xff4edb,size,sizeAttenuation:true,depthTest:false}));points.renderOrder=20;protectedOverlayGroup.add(points);entry.protectedOverlay=points;
 }
 
 function paintProtectedSurface(clientX,clientY) {
@@ -370,24 +439,26 @@ function paintProtectedSurface(clientX,clientY) {
   const hitNormal=hit.face?hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)):new THREE.Vector3(0,0,1);
   hitNormal.applyMatrix3(new THREE.Matrix3().getNormalMatrix(modelRoot.matrixWorld.clone().invert())).normalize();
   const positions=entry.rootPositions,normals=entry.rootNormals;
-  let indices=protectedVertices.get(entry);if(!indices){indices=new Set();protectedVertices.set(entry,indices);}
-  const startCount=indices.size;
+  let assignments=protectedVertices.get(entry);if(!assignments){assignments=new Map();protectedVertices.set(entry,assignments);}
+  const pickedAssignment={boneName:pickedBone,strength:Number(regionWeightMode.value)};let changed=false;
   for(let i=0;i<positions.length/3;i++){
     const dx=positions[i*3]-center.x,dy=positions[i*3+1]-center.y,dz=positions[i*3+2]-center.z;
     if(dx*dx+dy*dy+dz*dz>radius*radius)continue;
     if(normals&&normals[i*3]*hitNormal.x+normals[i*3+1]*hitNormal.y+normals[i*3+2]*hitNormal.z<0.2)continue;
-    indices.add(i);
+    const existing=assignments.get(i);
+    if(existing?.boneName!==pickedAssignment.boneName||existing?.strength!==pickedAssignment.strength){assignments.set(i,pickedAssignment);changed=true;}
   }
-  if(indices.size===startCount)return false;
+  if(!changed)return false;
   updateProtectedOverlay(entry);refreshProtectedBoneOptions();
-  const total=[...protectedVertices.values()].reduce((sum,set)=>sum+set.size,0);
-  setStatus(`${boneByName(pickedBone)?.label||pickedBone}へ固定する頂点を選択中：${total.toLocaleString()}個。オレンジ色の範囲を確認してください。`);
+  const total=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
+  setStatus(`${boneByName(pickedBone)?.label||pickedBone}へ割り当てる頂点を選択中：${total.toLocaleString()}個。紫色の点を確認してください。`);
   return true;
 }
 
 function setProtectMode(enabled) {
   protectMode=enabled;lastPaintKey=null;lastPaintAt=0;
   if(enabled&&placeMode){placeMode=false;placeButton.textContent='位置を置く：OFF';placeButton.style.background='';}
+  if(enabled&&regionObject?.visible)setRegionVisible(false);
   controls.enabled=!enabled&&!placeMode;
   protectToggle.textContent=`固定領域を塗る：${enabled?'ON':'OFF'}`;
   protectToggle.style.background=enabled?'#79421e':'';
@@ -398,11 +469,11 @@ function setProtectMode(enabled) {
 protectToggle.addEventListener('click',()=>setProtectMode(!protectMode));
 protectedBoneSelect.addEventListener('change',()=>setStatus(`${protectedBoneSelect.selectedOptions[0]?.textContent||'選択ボーン'}へ、次に塗る頂点を固定します。`));
 protectBrush.addEventListener('input',()=>protectBrushValue.textContent=`${Number(protectBrush.value).toFixed(1)}%`);
-clearProtectedButton.addEventListener('click',()=>{protectedVertices.clear();for(const entry of modelEntries)updateProtectedOverlay(entry);refreshProtectedBoneOptions();setStatus('固定領域の選択をすべて消しました。');});
+clearProtectedButton.addEventListener('click',()=>{protectedVertices.clear();for(const entry of modelEntries)updateProtectedOverlay(entry);refreshProtectedBoneOptions();setStatus('部位ごとのウェイト指定をすべて消しました。');});
 
 function positionInsideFromSurface(bone) {
   if(!bone.surfacePoint||!bone.surfaceNormal)return;
-  const worldHeight=new THREE.Box3().setFromObject(modelRoot).getSize(new THREE.Vector3()).y;
+  const worldHeight=modelLocalBounds().getSize(new THREE.Vector3()).y*modelRoot.getWorldScale(new THREE.Vector3()).y;
   const depth=worldHeight*(Number(boneDepth.value)/100);
   const point=bone.surfacePoint.clone().addScaledVector(bone.surfaceNormal,-depth);
   bone.position=localPoint(point);
@@ -761,6 +832,16 @@ function normalizeWeights(values,offset,boneCount){
   for(let b=0;b<boneCount;b++)values[offset+b]/=sum;
 }
 
+function normalizeAllowedWeights(values,offset,boneOffset,boneCount,allowed,fallbackBone){
+  let sum=0;
+  for(let b=0;b<boneCount;b++){
+    if(allowed[boneOffset+b])sum+=values[offset+b];
+    else values[offset+b]=0;
+  }
+  if(sum<=1e-12){values[offset+fallbackBone]=1;return;}
+  for(let b=0;b<boneCount;b++)if(allowed[boneOffset+b])values[offset+b]/=sum;
+}
+
 function generateMeshWeights(entry,bonesByName,rootSize){
   const mesh=entry.mesh, geometry=entry.geometry.clone();
   geometry.deleteAttribute('skinIndex');geometry.deleteAttribute('skinWeight');
@@ -779,6 +860,7 @@ function generateMeshWeights(entry,bonesByName,rootSize){
   const segmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
   const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
   let dense=new Float32Array(count*boneCount);
+  const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
   for(let v=0;v<count;v++){
     const p=rootVertices[v],hits=[];
     for(let s=0;s<segmentData.length;s++){
@@ -790,11 +872,14 @@ function generateMeshWeights(entry,bonesByName,rootSize){
     hits.sort((a,b)=>a.distance-b.distance);
     const primary=hits[0],base=segmentData[primary.index],offset=v*boneCount;
     dense[offset+base.a]+=1-primary.t;dense[offset+base.b]+=primary.t;
+    allowedInfluences[offset+base.a]=1;allowedInfluences[offset+base.b]=1;
+    fallbackBones[v]=primary.t<0.5?base.a:base.b;
     let secondary=null,bestGap=Infinity;
     for(const s of segmentAdj[primary.index]){const hit=hits.find(item=>item.index===s);const gap=hit.distance-primary.distance;if(gap<bestGap){bestGap=gap;secondary=hit;}}
     if(secondary&&bestGap<=maxGap){
       const seg=segmentData[secondary.index],amount=Math.exp(-(bestGap*bestGap)/(2*sigma*sigma));
       dense[offset+seg.a]+=amount*(1-secondary.t);dense[offset+seg.b]+=amount*secondary.t;
+      allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;
     }
     normalizeWeights(dense,offset,boneCount);
   }
@@ -808,28 +893,37 @@ function generateMeshWeights(entry,bonesByName,rootSize){
       if(!neighbors.length){next.set(dense.subarray(offset,offset+boneCount),offset);continue;}
       const self=.5,other=.5/neighbors.length;
       for(let b=0;b<boneCount;b++){
+        if(!allowedInfluences[offset+b]){next[offset+b]=0;continue;}
         let value=dense[offset+b]*self;
         for(const n of neighbors)value+=dense[n*boneCount+b]*other;
         next[offset+b]=value;
       }
-      normalizeWeights(next,offset,boneCount);
+      normalizeAllowedWeights(next,offset,offset,boneCount,allowedInfluences,fallbackBones[v]);
     }
     for(const group of groups){
       for(let b=0;b<boneCount;b++){
         let sum=0;for(const v of group)sum+=next[v*boneCount+b];
         const average=sum/group.length;for(const v of group)next[v*boneCount+b]=average;
       }
-      for(const v of group)normalizeWeights(next,v*boneCount,boneCount);
+      for(const v of group){const offset=v*boneCount;normalizeAllowedWeights(next,offset,offset,boneCount,allowedInfluences,fallbackBones[v]);}
     }
     [dense,next]=[next,dense];
   }
-  const locked=protectedVertices.get(entry);
-  if(locked?.size){
-    const lockedBoneIndex=indexByName.get(protectedBoneSelect.value);
-    if(lockedBoneIndex==null)throw new Error('固定先のボーンを確認してください。');
-    const expanded=new Set(locked);
-    for(const group of groups)if(group.some(vertex=>locked.has(vertex)))for(const vertex of group)expanded.add(vertex);
-    for(const vertex of expanded){const offset=vertex*boneCount;dense.fill(0,offset,offset+boneCount);dense[offset+lockedBoneIndex]=1;}
+  const assigned=protectedVertices.get(entry);
+  if(assigned?.size){
+    const expanded=new Map(assigned);
+    for(const group of groups){
+      const chosen=group.map(vertex=>expanded.get(vertex)).find(Boolean);
+      if(chosen)for(const vertex of group)if(!expanded.has(vertex))expanded.set(vertex,chosen);
+    }
+    for(const [vertex,assignment] of expanded){
+      const boneIndex=indexByName.get(assignment.boneName);
+      if(boneIndex==null)throw new Error(`割り当て先のボーンが見つかりません: ${assignment.boneName}`);
+      const strength=THREE.MathUtils.clamp(assignment.strength,0,1),offset=vertex*boneCount;
+      for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-strength);
+      dense[offset+boneIndex]+=strength;
+      normalizeWeights(dense,offset,boneCount);
+    }
   }
   const skinIndex=new Uint16Array(count*4),skinWeight=new Float32Array(count*4);
   for(let v=0;v<count;v++){
@@ -890,8 +984,8 @@ function generateRigAndWeights(){
     }
     modelRoot.updateMatrixWorld(true);
     exportButton.disabled=false;
-    const lockedCount=[...protectedVertices.values()].reduce((sum,set)=>sum+set.size,0);
-    setStatus(`リギングを生成しました。${modelEntries.length}個のMeshを処理し、固定頂点${lockedCount.toLocaleString()}個は${protectedBoneSelect.selectedOptions[0]?.textContent||'選択ボーン'}へ100%割り当てました。動作を確認してGLBを保存してください。`);
+    const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
+    setStatus(`リギングを生成しました。${modelEntries.length}個のMeshを処理し、部位指定した${assignedCount.toLocaleString()}頂点へ指定ボーンのウェイトを適用しました。動作を確認してGLBを保存してください。`);
   }catch(error){
     console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
   }
@@ -901,6 +995,8 @@ generateButton.addEventListener('click',generateRigAndWeights);
 async function exportGlb(){
   if(!modelRoot)return;
   exportButton.disabled=true;setStatus('GLBを書き出しています…');
+  const wasRegionVisible=Boolean(regionObject?.visible);
+  if(wasRegionVisible)regionObject.visible=false;
   try{
     modelRoot.updateMatrixWorld(true);
     const data=await new GLTFExporter().parseAsync(modelRoot,{binary:true,onlyVisible:true});
@@ -910,7 +1006,7 @@ async function exportGlb(){
     setTimeout(()=>URL.revokeObjectURL(url),30000);
     setStatus('リギング済みGLBをダウンロードしました。ファイルは端末内に保存されています。');
   }catch(error){console.error(error);setStatus(`書き出しに失敗しました: ${error.message||error}`);}
-  finally{exportButton.disabled=false;}
+  finally{if(wasRegionVisible&&regionObject)regionObject.visible=true;exportButton.disabled=false;}
 }
 exportButton.addEventListener('click',exportGlb);
 

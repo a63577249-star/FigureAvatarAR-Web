@@ -66,24 +66,30 @@
         <div class="row"><button id="place-toggle" class="secondary" disabled>位置を置く：OFF</button><button id="auto-place" class="secondary" disabled>標準19関節に戻す</button></div>
       </section>
       <section class="group">
-        <h2>3. 頭部・角などを選んだボーンに固定</h2>
-        <label class="hint" for="protected-bone">固定先ボーン（頭部なら頭のボーン）</label>
+        <h2>3. Unity風の範囲で部位を指定</h2>
+        <div class="row"><button id="region-toggle" class="secondary" disabled>範囲ボックスを表示</button><select id="region-mode" aria-label="範囲ボックス操作"><option value="translate">箱を移動</option><option value="scale">箱の大きさ</option></select></div>
+        <button id="region-detect" class="secondary" disabled>箱の中の頂点に割り当て</button>
+        <p class="hint">水色の箱をUnityのSceneビューのように移動・拡大縮小します。先にボーンと割合を選び、このボタンで箱の中の頂点へ割り当てます。別の部位も箱を移して追加できます。選択頂点は紫色で表示されます。</p>
+        <h2>選択した部位のウェイト</h2>
+        <label class="hint" for="protected-bone">割り当て先ボーン（頭部なら頭のボーン）</label>
         <select id="protected-bone" disabled></select>
+        <label class="hint" for="region-weight-mode">選択部位への割り当て</label>
+        <select id="region-weight-mode"><option value="1">100%固定（角・髪・小物）</option><option value="0.7">強く影響（肌・服）</option><option value="0.45">やわらかく影響（関節周辺）</option></select>
         <label class="hint" for="protect-brush">塗る範囲 <output id="protect-brush-value">1.0%</output></label>
         <input id="protect-brush" type="range" min="0.2" max="5" value="1" step="0.2" disabled>
         <div class="row"><button id="protect-toggle" class="secondary" disabled>固定領域を塗る：OFF</button><button id="clear-protected" class="secondary" disabled>選択を消す</button></div>
-        <p class="hint">腕に引かれる角・髪・小物などを塗ると、その頂点は選択したボーンに100%固定されます。AI骨格では頭部にある関節を固定先に選んでください。塗った点はオレンジ色で表示します。</p>
+        <p class="hint">角・髪・小物は100%固定、肌や服は70%または45%を選ぶと他ボーンの動きも残せます。部位ごとに箱を移し、別のボーンと割合を指定できます。AI骨格では部位に近い関節を選んでください。</p>
       </section>
       <section class="group">
         <h2>4. ウェイトを生成・保存</h2>
         <button id="generate" disabled>ボーンとウェイトを生成</button>
         <button id="export" class="secondary" disabled>リギング済みGLBを保存</button>
-        <p class="hint">通常部分はボーン位置から自動でウェイトを計算します。固定領域はこの計算より優先し、塗った頂点を指定ボーン100%にします。出力GLBはダウンロードして保管できます。</p>
+        <p class="hint">通常部分は近いボーン区間を基準にし、接続する近傍ボーンの範囲内だけでウェイトをなじませます。別の腕や脚のウェイトが表面沿いに広がるのを抑えます。部位固定は自動計算より優先します。</p>
       </section>
       <div id="status" role="status">モデルファイルを選択してください。</div>
     </aside>
     <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
   </main>
-  <script type="module" src="./rigging.js?v=protected-head-region-brush-20261116"></script>
+  <script type="module" src="./rigging.js?v=unity-region-box-local-weights-20261116"></script>
 </body>
 </html>

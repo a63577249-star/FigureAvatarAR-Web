@@ -697,10 +697,10 @@ function allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoo
   return best;
 }
 
-async function loadAiSessions(ort){
-  if(aiSessions)return aiSessions;
+async function loadAiSessions(ort,executionProvider='webgpu'){
+  if(aiSessions?.executionProvider===executionProvider)return aiSessions;
   const base='https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu/resolve/main/';
-  const options={executionProviders:['webgpu'],graphOptimizationLevel:'all'};
+  const options={executionProviders:[executionProvider],graphOptimizationLevel:'all'};
   ort.env.wasm.proxy=false;
   ort.env.wasm.numThreads=1;
   const ortRuntimeBase=new URL('./vendor/onnxruntime-web-1.31.1/',import.meta.url);
@@ -728,18 +728,22 @@ async function loadAiSessions(ort){
   setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');
   const embed=await createSession('embed.onnx');
   const decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data');
-  aiSessions={ort,encoder,embed,decoder};
+  aiSessions={ort,encoder,embed,decoder,executionProvider};
   return aiSessions;
 }
 
 async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
-  if(!navigator.gpu)throw new Error('このSafariではWebGPUが利用できません。Safari 26以降か、標準19関節の手動配置を使ってください。');
-  const adapter=await navigator.gpu.requestAdapter();
-  if(!adapter)throw new Error('この端末はWebGPU対応GPUを利用できません。標準19関節の手動配置を使ってください。');
+  let executionProvider='webgpu',adapter=null;
+  try{if(navigator.gpu)adapter=await navigator.gpu.requestAdapter();}catch(error){console.warn('WebGPU adapter check failed; offering CPU inference.',error);}
+  if(!adapter){
+    const proceed=window.confirm('この端末ではWebGPUを利用できません。AI骨格推定をCPU（WebAssembly）で試しますか？初回は約455MBを取得し、処理にかなり時間がかかる場合があります。Safariがメモリ不足でページを再読み込みする可能性もあります。キャンセルしても、標準19関節の手動配置とウェイト生成は利用できます。');
+    if(!proceed)throw new Error('CPUでのAI推定を中止しました。標準19関節の手動配置とウェイト生成はそのまま使えます。');
+    executionProvider='wasm';
+  }
   const ort=await import('./vendor/onnxruntime-web-1.31.1/ort.webgpu.bundle.min.js');
-  const {encoder,embed,decoder}=await loadAiSessions(ort);
-  setStatus('モデル表面から点と法線を抽出しています…');
+  const {encoder,embed,decoder}=await loadAiSessions(ort,executionProvider);
+  setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':'モデル表面から点と法線を抽出しています…');
   const cloud=sampleModelSurface(16384);
   const vertexTensor=new ort.Tensor('float32',cloud.vertices,[1,16384,3]);
   const normalTensor=new ort.Tensor('float32',cloud.normals,[1,16384,3]);
@@ -747,7 +751,7 @@ async function predictAiSkeleton(){
   const vertexInput=encoder.inputNames.find(name=>/vertices|points/i.test(name))||encoder.inputNames[0];
   const normalInput=encoder.inputNames.find(name=>/normals/i.test(name))||encoder.inputNames[1];
   encoderInputs[vertexInput]=vertexTensor;encoderInputs[normalInput]=normalTensor;
-  setStatus('AIが形状を解析しています…');
+  setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でAIが形状を解析しています…':'AIが形状を解析しています…');
   const encoded=await encoder.run(encoderInputs);
   const latentName=encoder.outputNames.find(name=>/latent/i.test(name))||encoder.outputNames[0];
   const latents=encoded[latentName];
@@ -790,7 +794,7 @@ async function predictAiSkeleton(){
       coordinateCount=0;
     }
     if(completedJoints>=96&&coordinateCount%3===0&&branchCoordinatesRemaining===0)break;
-    if(step%4===0){setStatus(`AIが骨格を推定しています… ${completedJoints}関節`);await new Promise(resolve=>setTimeout(resolve,0));}
+    if(step%4===0){setStatus(`${executionProvider==='wasm'?'CPU（WebAssembly）で':''}AIが骨格を推定しています… ${completedJoints}関節`);await new Promise(resolve=>setTimeout(resolve,0));}
     const tokenInput=new ort.Tensor('int64',new BigInt64Array([BigInt(token)]),[1,1]);
     const tokenEmbedding=await embed.run({[embed.inputNames[0]]:tokenInput});
     const nextEmbedding=tokenEmbedding[embed.outputNames[0]];
@@ -864,7 +868,7 @@ async function runAiAutoRig(){
     setStatus(`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
   }catch(error){
     console.error(error);
-    setStatus(`AI自動推定に失敗しました: ${error.message||error}`);
+    setStatus(`AI自動推定に失敗しました: ${error.message||error} 標準19関節の手動配置とウェイト生成は続けて利用できます。`);
   }finally{aiRigButton.disabled=false;}
 }
 aiRigButton.addEventListener('click',runAiAutoRig);

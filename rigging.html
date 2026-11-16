@@ -63,7 +63,7 @@
       <section class="group">
         <h2>2. ボーンの位置を調整</h2>
         <button id="ai-auto-rig" class="secondary">AIでボーンを自動推定（実験）</button>
-        <p class="hint">初回のみAIモデル約455MBを取得します。AI推定はWebGPU対応端末で使用できます（Safari 26以降）。対応しない端末でも標準19関節の手動配置とウェイト生成は行えます。モデルは端末内で処理します。AIモデル: <a href="https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu" target="_blank" rel="noreferrer">UniRigブラウザー版</a></p>
+        <p class="hint">初回のみAIモデル約455MBを取得します。WebGPUが使えない端末では、確認後にCPU（WebAssembly）での推定も試せます。CPU処理は遅く、スマートフォンではメモリ不足になる場合があります。標準19関節の手動配置とウェイト生成は引き続き利用できます。モデルは端末内で処理します。AIモデル: <a href="https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu" target="_blank" rel="noreferrer">UniRigブラウザー版</a></p>
         <div id="bone-list"></div>
         <label class="hint" for="bone-depth">表面から内側へ <output id="bone-depth-value">3%</output></label>
         <input id="bone-depth" type="range" min="0" max="12" value="3" step="0.5">
@@ -103,6 +103,6 @@
     </aside>
     <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
   </main>
-  <script type="module" src="./rigging.js?v=ios-safari-region-sliders-20261116"></script>
+  <script type="module" src="./rigging.js?v=ios-safari-wasm-fallback-20261116"></script>
 </body>
 </html>

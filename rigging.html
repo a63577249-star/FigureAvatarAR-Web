@@ -66,15 +66,24 @@
         <div class="row"><button id="place-toggle" class="secondary" disabled>位置を置く：OFF</button><button id="auto-place" class="secondary" disabled>標準19関節に戻す</button></div>
       </section>
       <section class="group">
-        <h2>3. ウェイトを生成・保存</h2>
+        <h2>3. 頭部・角などを選んだボーンに固定</h2>
+        <label class="hint" for="protected-bone">固定先ボーン（頭部なら頭のボーン）</label>
+        <select id="protected-bone" disabled></select>
+        <label class="hint" for="protect-brush">塗る範囲 <output id="protect-brush-value">1.0%</output></label>
+        <input id="protect-brush" type="range" min="0.2" max="5" value="1" step="0.2" disabled>
+        <div class="row"><button id="protect-toggle" class="secondary" disabled>固定領域を塗る：OFF</button><button id="clear-protected" class="secondary" disabled>選択を消す</button></div>
+        <p class="hint">腕に引かれる角・髪・小物などを塗ると、その頂点は選択したボーンに100%固定されます。AI骨格では頭部にある関節を固定先に選んでください。塗った点はオレンジ色で表示します。</p>
+      </section>
+      <section class="group">
+        <h2>4. ウェイトを生成・保存</h2>
         <button id="generate" disabled>ボーンとウェイトを生成</button>
         <button id="export" class="secondary" disabled>リギング済みGLBを保存</button>
-        <p class="hint">各頂点を近いボーン区間へ割り当て、接続する関節と隣接頂点に沿ってウェイトをなじませます。出力GLBはダウンロードして保管できます。</p>
+        <p class="hint">通常部分はボーン位置から自動でウェイトを計算します。固定領域はこの計算より優先し、塗った頂点を指定ボーン100%にします。出力GLBはダウンロードして保管できます。</p>
       </section>
       <div id="status" role="status">モデルファイルを選択してください。</div>
     </aside>
     <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
   </main>
-  <script type="module" src="./rigging.js?v=ai-skeleton-tokens-20261116"></script>
+  <script type="module" src="./rigging.js?v=protected-head-region-brush-20261116"></script>
 </body>
 </html>

@@ -16,19 +16,14 @@ self.onmessage = async event => {
     };
 
     self.postMessage({ type: 'status', message: '形状解析モデルを取得しています…' });
-    const modelResponse = await fetch(MODEL_ROOT + 'encoder_q8.onnx');
-    if (!modelResponse.ok) throw new Error(`形状解析モデルを取得できません（HTTP ${modelResponse.status}）。`);
-    const modelBytes = new Uint8Array(await modelResponse.arrayBuffer());
-    const dataResponse = await fetch(MODEL_ROOT + 'encoder_q8.onnx.data');
-    if (!dataResponse.ok) throw new Error(`形状解析データを取得できません（HTTP ${dataResponse.status}）。`);
-    const externalData = new Uint8Array(await dataResponse.arrayBuffer());
-
-    session = await ort.InferenceSession.create(modelBytes, {
+    session = await ort.InferenceSession.create(MODEL_ROOT + 'encoder_q8.onnx', {
       executionProviders: ['wasm'],
       graphOptimizationLevel: 'all',
       enableCpuMemArena: false,
       enableMemPattern: false,
-      externalData: [{ path: 'encoder_q8.onnx.data', data: externalData }]
+      // Let ORT fetch and mount the large external weights internally. Keeping a
+      // second 455 MB JavaScript ArrayBuffer alive during inference can evict Safari.
+      externalData: [{ path: 'encoder_q8.onnx.data', data: MODEL_ROOT + 'encoder_q8.onnx.data' }]
     });
 
     const verticesTensor = new ort.Tensor('float32', vertices, [1, pointCount, 3]);

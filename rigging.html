@@ -63,7 +63,7 @@
       <section class="group">
         <h2>2. ボーンの位置を調整</h2>
         <button id="ai-auto-rig" class="secondary">AIでボーンを自動推定（実験）</button>
-        <p class="hint">初回のみAIモデル約455MBを取得します。スマートフォンではWebGPUを使って端末内で推定し、入力点数と一度に処理する量を減らします。WebGPUが使えない場合は、Safari終了を防ぐためCPU推定を開始しません。標準19関節の手動配置とウェイト生成は利用できます。AIモデル: <a href="https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu" target="_blank" rel="noreferrer">UniRigブラウザー版</a></p>
+        <p class="hint">初回のみAIモデル約455MBを取得します。スマートフォンでは形状解析をCPU（WebAssembly）、骨格生成をWebGPUで行い、GPUの停止を避けます。モデル全体は端末内で処理します。WebGPUが使えない場合はAI推定を開始しませんが、標準19関節の手動配置とウェイト生成は利用できます。AIモデル: <a href="https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu" target="_blank" rel="noreferrer">UniRigブラウザー版</a></p>
         <div id="bone-list"></div>
         <label class="hint" for="bone-depth">表面から内側へ <output id="bone-depth-value">3%</output></label>
         <input id="bone-depth" type="range" min="0" max="12" value="3" step="0.5">
@@ -103,6 +103,6 @@
     </aside>
     <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
   </main>
-  <script type="module" src="./rigging.js?v=ios-mobile-webgpu-memoryrelease-20261117"></script>
+  <script type="module" src="./rigging.js?v=ios-mobile-cpu-encoder-20261117"></script>
 </body>
 </html>

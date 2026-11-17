@@ -697,11 +697,12 @@ function allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoo
   return best;
 }
 
-async function loadAiSessions(ort,executionProvider='webgpu'){
-  const canReuse=aiSessions?.executionProvider===executionProvider;
+async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false){
+  const encoderExecutionProvider=useCpuEncoder?'wasm':executionProvider;
+  const cacheKey=`${executionProvider}:${encoderExecutionProvider}`;
+  const canReuse=aiSessions?.cacheKey===cacheKey;
   if(canReuse&&aiSessions.encoder&&aiSessions.embed&&aiSessions.decoder)return aiSessions;
   const base='https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu/resolve/main/';
-  const options={executionProviders:[executionProvider],graphOptimizationLevel:'all'};
   ort.env.wasm.proxy=false;
   ort.env.wasm.numThreads=1;
   const ortRuntimeBase=new URL('./vendor/onnxruntime-web-1.31.1/',import.meta.url);
@@ -709,12 +710,12 @@ async function loadAiSessions(ort,executionProvider='webgpu'){
     mjs:new URL('ort-wasm-simd-threaded.asyncify.mjs',ortRuntimeBase).href,
     wasm:new URL('ort-wasm-simd-threaded.asyncify.wasm',ortRuntimeBase).href
   };
-  const createSession=async(modelName,externalDataName=null,keepOutputsOnGpu=false)=>{
+  const createSession=async(modelName,externalDataName=null,sessionProvider=executionProvider,keepOutputsOnGpu=false)=>{
     setStatus(`AIモデルを取得しています: ${modelName}${externalDataName?' と外部データ':''}…`);
     const modelResponse=await fetch(base+modelName);
     if(!modelResponse.ok)throw new Error(`${modelName}の取得に失敗しました（HTTP ${modelResponse.status}）。`);
     const modelBytes=new Uint8Array(await modelResponse.arrayBuffer());
-    const sessionOptions={...options};
+    const sessionOptions={executionProviders:[sessionProvider],graphOptimizationLevel:'all'};
     if(keepOutputsOnGpu)sessionOptions.preferredOutputLocation='gpu-buffer';
     if(externalDataName){
       const dataResponse=await fetch(base+externalDataName);
@@ -729,10 +730,10 @@ async function loadAiSessions(ort,executionProvider='webgpu'){
   let encoder=canReuse?aiSessions.encoder:null;
   let embed=canReuse?aiSessions.embed:null;
   let decoder=canReuse?aiSessions.decoder:null;
-  if(!encoder)encoder=await createSession('encoder_q8.onnx','encoder_q8.onnx.data');
-  if(!embed){setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');embed=await createSession('embed.onnx');}
-  if(!decoder)decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data',executionProvider==='webgpu');
-  aiSessions={ort,encoder,embed,decoder,executionProvider};
+  if(!encoder)encoder=await createSession('encoder_q8.onnx','encoder_q8.onnx.data',encoderExecutionProvider,encoderExecutionProvider==='webgpu');
+  if(!embed){setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');embed=await createSession('embed.onnx',null,executionProvider);}
+  if(!decoder)decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data',executionProvider,executionProvider==='webgpu');
+  aiSessions={ort,encoder,embed,decoder,executionProvider,cacheKey};
   return aiSessions;
 }
 
@@ -752,7 +753,9 @@ async function predictAiSkeleton(){
     executionProvider='wasm';
   }
   const ort=await import('./vendor/onnxruntime-web-1.31.1/ort.webgpu.bundle.min.js');
-  const {encoder,embed,decoder}=await loadAiSessions(ort,executionProvider);
+  const useCpuEncoder=isMobile&&executionProvider==='webgpu';
+  const encoderExecutionProvider=useCpuEncoder?'wasm':executionProvider;
+  const {encoder,embed,decoder}=await loadAiSessions(ort,executionProvider,useCpuEncoder);
   const surfaceSampleCount=isMobile?2048:16384;
   setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':`${isMobile?'スマートフォン向けに点数を抑えて':''}モデル表面から点と法線を抽出しています…`);
   const cloud=sampleModelSurface(surfaceSampleCount);
@@ -762,11 +765,11 @@ async function predictAiSkeleton(){
   const vertexInput=encoder.inputNames.find(name=>/vertices|points/i.test(name))||encoder.inputNames[0];
   const normalInput=encoder.inputNames.find(name=>/normals/i.test(name))||encoder.inputNames[1];
   encoderInputs[vertexInput]=vertexTensor;encoderInputs[normalInput]=normalTensor;
-  setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でAIが形状を解析しています…':'AIが形状を解析しています…');
+  setStatus(useCpuEncoder?'スマートフォン内のCPU（WebAssembly）で形状を解析しています…':executionProvider==='wasm'?'CPU（WebAssembly）でAIが形状を解析しています…':'AIが形状を解析しています…');
   let encoded;
   try{encoded=await encoder.run(encoderInputs);}
-  catch(error){throw new Error(`形状解析中にGPUが停止しました: ${error.message||error}`);}
-  if(isMobile&&executionProvider==='webgpu'){
+  catch(error){throw new Error(`形状解析（${encoderExecutionProvider==='wasm'?'CPU':'GPU'}）中に失敗しました: ${error.message||error}`);}
+  if(isMobile){
     try{await encoder.release();}
     finally{if(aiSessions?.encoder===encoder)aiSessions.encoder=null;}
   }

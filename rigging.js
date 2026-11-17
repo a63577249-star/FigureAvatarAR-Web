@@ -750,7 +750,7 @@ async function predictAiSkeleton(){
   }
   const ort=await import('./vendor/onnxruntime-web-1.31.1/ort.webgpu.bundle.min.js');
   const {encoder,embed,decoder}=await loadAiSessions(ort,executionProvider);
-  const surfaceSampleCount=isMobile?4096:16384;
+  const surfaceSampleCount=isMobile?2048:16384;
   setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':`${isMobile?'スマートフォン向けに点数を抑えて':''}モデル表面から点と法線を抽出しています…`);
   const cloud=sampleModelSurface(surfaceSampleCount);
   const vertexTensor=new ort.Tensor('float32',cloud.vertices,[1,surfaceSampleCount,3]);
@@ -760,7 +760,9 @@ async function predictAiSkeleton(){
   const normalInput=encoder.inputNames.find(name=>/normals/i.test(name))||encoder.inputNames[1];
   encoderInputs[vertexInput]=vertexTensor;encoderInputs[normalInput]=normalTensor;
   setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でAIが形状を解析しています…':'AIが形状を解析しています…');
-  const encoded=await encoder.run(encoderInputs);
+  let encoded;
+  try{encoded=await encoder.run(encoderInputs);}
+  catch(error){throw new Error(`形状解析中にGPUが停止しました: ${error.message||error}`);}
   const latentName=encoder.outputNames.find(name=>/latent/i.test(name))||encoder.outputNames[0];
   const latents=encoded[latentName];
   const ids=new ort.Tensor('int64',new BigInt64Array([257n,266n]),[1,2]);
@@ -773,7 +775,7 @@ async function predictAiSkeleton(){
   const logitsName=decoder.outputNames.find(name=>/logits/i.test(name))||decoder.outputNames[0];
   const cacheForInput=name=>name.replace(/^past\./,'present.');
   const prefillTokenCount=prefill.length/1024;
-  const prefillChunkSize=executionProvider==='webgpu'?(isMobile?64:128):prefillTokenCount;
+  const prefillChunkSize=executionProvider==='webgpu'?(isMobile?32:128):prefillTokenCount;
   let decoded=null;
   let cache={};
   for(let offset=0;offset<prefillTokenCount;offset+=prefillChunkSize){
@@ -781,7 +783,8 @@ async function predictAiSkeleton(){
     const feeds={inputs_embeds:new ort.Tensor('float32',prefill.subarray(offset*1024,(offset+chunkLength)*1024),[1,chunkLength,1024])};
     for(const name of pastInputs)feeds[name]=cache[name]||new ort.Tensor('float32',new Float32Array(0),[1,16,0,64]);
     const previousCache=cache;
-    decoded=await decoder.run(feeds);
+    try{decoded=await decoder.run(feeds);}
+    catch(error){throw new Error(`初回骨格処理 ${offset+1}〜${offset+chunkLength}/${prefillTokenCount} トークンでGPUが停止しました: ${error.message||error}`);}
     for(const tensor of Object.values(previousCache))tensor.dispose?.();
     cache={};
     for(const inputName of pastInputs){
@@ -800,7 +803,9 @@ async function predictAiSkeleton(){
   for(let step=0;step<512;step++){
     const logitsTensor=decoded[logitsName],vocab=267;
     const sequenceLength=logitsTensor.dims[1];
-    const logitsData=executionProvider==='webgpu'?await logitsTensor.getData():logitsTensor.data;
+    let logitsData;
+    try{logitsData=executionProvider==='webgpu'?await logitsTensor.getData():logitsTensor.data;}
+    catch(error){throw new Error(`関節 ${step+1} の結果取得中にGPUが停止しました: ${error.message||error}`);}
     const logits=logitsData.subarray((sequenceLength-1)*vocab,sequenceLength*vocab);
     const token=allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates);
     logitsTensor.dispose?.();
@@ -825,7 +830,8 @@ async function predictAiSkeleton(){
     const nextFeeds={inputs_embeds:nextEmbedding};
     for(const name of pastInputs)nextFeeds[name]=cache[name];
     const previousCache=cache;
-    decoded=await decoder.run(nextFeeds);
+    try{decoded=await decoder.run(nextFeeds);}
+    catch(error){throw new Error(`関節 ${step+1} の推定中にGPUが停止しました: ${error.message||error}`);}
     nextEmbedding.dispose?.();
     for(const tensor of Object.values(previousCache))tensor.dispose?.();
     cache={};

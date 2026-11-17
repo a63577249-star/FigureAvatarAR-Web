@@ -761,7 +761,7 @@ async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false
 
 function encodeMobileShapeInWorker(vertices,normals,pointCount){
   return new Promise((resolve,reject)=>{
-    const worker=new Worker(new URL('./mobile-encoder-worker.js',import.meta.url),{type:'module'});
+    const worker=new Worker(new URL('./mobile-encoder-worker.js?v=mobile-latent-256-20261117',import.meta.url),{type:'module'});
     let settled=false;
     const finish=(callback,value)=>{
       if(settled)return;

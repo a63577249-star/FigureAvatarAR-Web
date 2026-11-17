@@ -41,9 +41,12 @@ self.onmessage = async event => {
     const latent = outputs[latentName];
     const featureWidth = latent.dims.at(-1) || 1024;
     const sourceCount = latent.dims[1] || Math.floor(latent.data.length / featureWidth);
-    // The decoder was trained with the encoder's full 1024-token context.
-    // Pooling these latents changes its input distribution and can prevent EOS.
-    const targetCount = sourceCount;
+    // Safari cannot reliably retain the decoder's full 1024-token KV cache
+    // alongside its ~393 MB model weights. Pool the mobile encoder output to
+    // reduce both prefill memory and persistent decoder cache by 4x.
+    // Desktop inference continues to use the full encoder context.
+    const targetCount = Math.min(sourceCount, 256);
+    self.postMessage({ type: 'status', message: `スマートフォン用に形状情報を${targetCount}個へ圧縮しています…` });
     const compact = new Float32Array(targetCount * featureWidth);
     for (let target = 0; target < targetCount; target++) {
       const first = Math.floor(target * sourceCount / targetCount);

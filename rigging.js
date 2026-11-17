@@ -699,6 +699,9 @@ function allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoo
 
 async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false,stage='all'){
   const encoderExecutionProvider=useCpuEncoder?'wasm':executionProvider;
+  // The tiny token embedding graph can trigger WebGPU's minimum uniform-buffer
+  // alignment error on iOS. Keep it on WASM along with the encoder on mobile.
+  const embedExecutionProvider=useCpuEncoder?'wasm':executionProvider;
   const cacheKey=`${executionProvider}:${encoderExecutionProvider}`;
   const canReuse=aiSessions?.cacheKey===cacheKey;
   if(canReuse&&stage==='all'&&aiSessions.encoder&&aiSessions.embed&&aiSessions.decoder)return aiSessions;
@@ -743,13 +746,13 @@ async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false
     return aiSessions;
   }
   if(stage==='decoder'){
-    if(!embed)embed=await createSession('embed.onnx',null,executionProvider);
+    if(!embed)embed=await createSession('embed.onnx',null,embedExecutionProvider);
     if(!decoder)decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data',executionProvider,executionProvider==='webgpu');
     aiSessions={ort,encoder,embed,decoder,executionProvider,cacheKey};
     return aiSessions;
   }
   if(!encoder)encoder=await createSession('encoder_q8.onnx','encoder_q8.onnx.data',encoderExecutionProvider,encoderExecutionProvider==='webgpu');
-  if(!embed){setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');embed=await createSession('embed.onnx',null,executionProvider);}
+  if(!embed){setStatus('AIモデルを読み込んでいます…（小型の入力モデル）');embed=await createSession('embed.onnx',null,embedExecutionProvider);}
   if(!decoder)decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data',executionProvider,executionProvider==='webgpu');
   aiSessions={ort,encoder,embed,decoder,executionProvider,cacheKey};
   return aiSessions;
@@ -807,7 +810,7 @@ async function predictAiSkeleton(){
   const ids=new ort.Tensor('int64',new BigInt64Array([257n,266n]),[1,2]);
   let embedded;
   try{embedded=await embed.run({[embed.inputNames[0]]:ids});}
-  catch(error){throw new Error(`AI入力の埋め込み中にGPUが停止しました: ${error.message||error}`);}
+  catch(error){throw new Error(`AI入力の埋め込み処理に失敗しました（${useCpuEncoder?'端末内CPU':'GPU'}）: ${error.message||error}`);}
   const prompt=embedded[embed.outputNames[0]];
   const latentFeatureWidth=latents.dims.at(-1)||1024;
   const sourceLatentCount=latents.dims[1]||Math.floor(latents.data.length/latentFeatureWidth);

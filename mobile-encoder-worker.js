@@ -41,7 +41,7 @@ self.onmessage = async event => {
     const latent = outputs[latentName];
     const featureWidth = latent.dims.at(-1) || 1024;
     const sourceCount = latent.dims[1] || Math.floor(latent.data.length / featureWidth);
-    const targetCount = Math.min(128, sourceCount);
+    const targetCount = Math.min(256, sourceCount);
     const compact = new Float32Array(targetCount * featureWidth);
     for (let target = 0; target < targetCount; target++) {
       const first = Math.floor(target * sourceCount / targetCount);

@@ -43,7 +43,7 @@ const regionModeSelect = document.querySelector('#region-mode');
 const regionDetectButton = document.querySelector('#region-detect');
 const regionAxisInputs = Array.from(document.querySelectorAll('[data-region-axis]'));
 
-if(IS_MOBILE_DEVICE)aiRigButton.textContent='スマホ向け簡易骨格を配置（19関節）';
+if(IS_MOBILE_DEVICE)aiRigButton.textContent='軽量AIで関節を配置（スマホ）';
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#121a27');
@@ -87,6 +87,7 @@ let sourceName = 'avatar';
 let pointerStart = null;
 let rigMode = 'template';
 let aiSessions = null;
+let mobilePoseTaskPromise = null;
 let protectMode = false;
 let protectedVertices = new Map();
 let lastPaintKey = null;
@@ -279,7 +280,7 @@ function modelLocalBounds() {
 function createRegionBox(){
   if(regionObject?.parent)regionObject.parent.remove(regionObject);
   regionTransform.detach();
-  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3());
   regionModelBounds=bounds.clone();
   const minSize=Math.max(size.length()*0.025,0.01);
   const boxHeight=Math.max(size.y*0.22,minSize),boxWidth=Math.max(size.x*0.42,minSize),boxDepth=Math.max(size.z*0.42,minSize);
@@ -992,15 +993,107 @@ function buildAiBoneDefs(tokens,center,longest){
   }));
 }
 
+async function getMobilePoseLandmarker(){
+  if(!mobilePoseTaskPromise){
+    mobilePoseTaskPromise=(async()=>{
+      const base='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.3';
+      const {FilesetResolver,PoseLandmarker}=await import(`${base}/+esm`);
+      const vision=await FilesetResolver.forVisionTasks(`${base}/wasm`);
+      return PoseLandmarker.createFromOptions(vision,{
+        baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',delegate:'CPU'},
+        runningMode:'IMAGE',numPoses:1,
+        minPoseDetectionConfidence:0.25,minPosePresenceConfidence:0.25,minTrackingConfidence:0.25
+      });
+    })().catch(error=>{mobilePoseTaskPromise=null;throw error;});
+  }
+  return mobilePoseTaskPromise;
+}
+
+async function estimateMobileTemplateRig(){
+  restoreTemplateBoneDefs();
+  placeStandardRig();
+  const fallback=new Map(BONE_DEFS.map(bone=>[bone.name,bone.position.clone()]));
+  setStatus('スマホ向け軽量AI（Pose Lite）を準備しています…初回は数MBを取得します。');
+  const landmarker=await getMobilePoseLandmarker();
+  modelRoot.updateMatrixWorld(true);
+  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+  const worldBounds=bounds.clone().applyMatrix4(modelRoot.matrixWorld);
+  const worldCenter=worldBounds.getCenter(new THREE.Vector3()),worldSize=worldBounds.getSize(new THREE.Vector3());
+  const maxSize=Math.max(worldSize.x,worldSize.y,worldSize.z,0.1);
+  const savedPosition=camera.position.clone(),savedQuaternion=camera.quaternion.clone(),savedUp=camera.up.clone();
+  const savedTarget=controls.target.clone(),savedEnabled=controls.enabled;
+  const savedGrid=grid.visible,savedMarkers=markerGroup.visible;
+  const savedLines=rigLines?.visible,savedRegion=regionObject?.visible;
+  const transformHelper=regionTransform.getHelper(),savedTransform=transformHelper.visible;
+  let result,projectionCamera;
+  try{
+    controls.enabled=false;controls.target.copy(worldCenter);
+    camera.up.set(0,1,0);camera.position.set(worldCenter.x,worldCenter.y,worldCenter.z+maxSize*2.2);camera.lookAt(worldCenter);camera.updateMatrixWorld(true);
+    projectionCamera=camera.clone();
+    grid.visible=false;markerGroup.visible=false;if(rigLines)rigLines.visible=false;
+    if(regionObject)regionObject.visible=false;transformHelper.visible=false;
+    renderer.render(scene,camera);
+    const source=renderer.domElement,scale=Math.min(1,384/source.width,512/source.height);
+    const image=document.createElement('canvas');
+    image.width=Math.max(1,Math.round(source.width*scale));image.height=Math.max(1,Math.round(source.height*scale));
+    image.getContext('2d',{alpha:false}).drawImage(source,0,0,image.width,image.height);
+    result=landmarker.detect(image);
+  }finally{
+    camera.position.copy(savedPosition);camera.quaternion.copy(savedQuaternion);camera.up.copy(savedUp);
+    controls.target.copy(savedTarget);controls.enabled=savedEnabled;
+    grid.visible=savedGrid;markerGroup.visible=savedMarkers;
+    if(rigLines)rigLines.visible=savedLines;
+    if(regionObject)regionObject.visible=savedRegion;
+    transformHelper.visible=savedTransform;
+    camera.updateMatrixWorld(true);renderer.render(scene,camera);
+  }
+  const pose=result?.landmarks?.[0];
+  if(!pose||pose.length<29)throw new Error('画面から人物の関節を十分に検出できませんでした。モデルを正面向きにして再試行するか、配置済みの標準19関節を調整してください。');
+  const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,0,1),-worldCenter.z);
+  const toModelPoint=index=>{
+    const landmark=pose[index];
+    if(!landmark||Math.min(landmark.visibility??1,landmark.presence??1)<0.12)return null;
+    ray.setFromCamera(new THREE.Vector2(landmark.x*2-1,1-landmark.y*2),projectionCamera);
+    const world=ray.ray.intersectPlane(plane,new THREE.Vector3());
+    return world?modelRoot.worldToLocal(world):null;
+  };
+  const pick=(index,name)=>toModelPoint(index)||fallback.get(name).clone();
+  const midpoint=(a,b)=>a.clone().add(b).multiplyScalar(0.5);
+  const leftShoulder=pick(11,'LeftShoulder'),rightShoulder=pick(12,'RightShoulder');
+  const leftElbow=pick(13,'LeftElbow'),rightElbow=pick(14,'RightElbow');
+  const leftWrist=pick(15,'LeftWrist'),rightWrist=pick(16,'RightWrist');
+  const leftHip=pick(23,'LeftUpperLeg'),rightHip=pick(24,'RightUpperLeg');
+  const leftKnee=pick(25,'LeftKnee'),rightKnee=pick(26,'RightKnee');
+  const leftAnkle=pick(27,'LeftAnkle'),rightAnkle=pick(28,'RightAnkle');
+  const chest=midpoint(leftShoulder,rightShoulder),hip=midpoint(leftHip,rightHip),nose=pick(0,'head');
+  const positions=new Map([
+    ['hip',hip],['supine',hip.clone().lerp(chest,0.36)],['chest',chest],
+    ['neck',chest.clone().lerp(nose,0.62)],['head',nose.clone().add(new THREE.Vector3(0,size.y*0.025,0))],
+    ['LeftShoulder',leftShoulder],['LeftUpperArm',leftShoulder.clone().lerp(leftElbow,0.52)],['LeftElbow',leftElbow],['LeftWrist',leftWrist],
+    ['RightShoulder',rightShoulder],['RightUpperArm',rightShoulder.clone().lerp(rightElbow,0.52)],['RightElbow',rightElbow],['RightWrist',rightWrist],
+    ['LeftUpperLeg',leftHip],['LeftKnee',leftKnee],['LeftAnkle',leftAnkle],
+    ['RightUpperLeg',rightHip],['RightKnee',rightKnee],['RightAnkle',rightAnkle]
+  ]);
+  for(const bone of BONE_DEFS)bone.position.copy(positions.get(bone.name));
+  activeBoneName='hip';rigMode='template';updateMarkers();renderBoneList();
+  return BONE_DEFS.length;
+}
+
 async function runAiAutoRig(){
   if(!modelRoot){setStatus('先にボーンのないGLB、glTF、OBJモデルを読み込んでください。');return;}
   aiRigButton.disabled=true;
   try{
     if(IS_MOBILE_DEVICE){
-      restoreTemplateBoneDefs();
-      placeStandardRig();
+      let joints=0;
+      try{joints=await estimateMobileTemplateRig();}
+      catch(error){
+        restoreTemplateBoneDefs();placeStandardRig();
+        const reason=error?.message||String(error);
+        setStatus(`軽量AIは配置できませんでした（${reason}）。標準19関節を仮配置したので、手動で調整してウェイトを生成できます。`);
+        return;
+      }
       autoButton.textContent='標準19関節に戻す';
-      setStatus('スマートフォンではページの再読み込みを防ぐため、大型AIモデルを起動せず標準19関節を配置しました。モデルに合わせて関節位置を調整し、ウェイトを生成してください。PCではAI自動推定を利用できます。');
+      setStatus(`スマホ向け軽量AIが${joints}関節を推定しました。画像からの推定なので、関節位置を確認・修正してウェイトを生成してください。`);
       return;
     }
     const prediction=await predictAiSkeleton();

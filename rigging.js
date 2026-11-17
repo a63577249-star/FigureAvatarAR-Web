@@ -715,7 +715,7 @@ async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false
     const modelResponse=await fetch(base+modelName);
     if(!modelResponse.ok)throw new Error(`${modelName}の取得に失敗しました（HTTP ${modelResponse.status}）。`);
     let modelBytes=new Uint8Array(await modelResponse.arrayBuffer());
-    const providerOptions=sessionProvider==='webgpu'&&useCpuEncoder
+    const providerOptions=sessionProvider==='webgpu'&&useCpuEncoder&&keepOutputsOnGpu
       ?{name:'webgpu',storageBufferCacheMode:'disabled',uniformBufferCacheMode:'disabled',queryResolveBufferCacheMode:'disabled',defaultBufferCacheMode:'disabled'}
       :sessionProvider;
     const sessionOptions={executionProviders:[providerOptions],graphOptimizationLevel:'all'};

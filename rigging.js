@@ -688,9 +688,8 @@ function sampleModelSurface(pointCount=16384) {
 function allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates){
   const candidates=[];
   for(let token=0;token<256;token++)candidates.push(token);
-  if(branchCoordinatesRemaining===0&&coordinateCount%3===0){
-    candidates.push(256,260,261,262);
-    if(hasCoordinates)candidates.push(258);
+  if(branchCoordinatesRemaining===0&&coordinateCount%6===0&&hasCoordinates){
+    candidates.push(256,258);
   }
   let best=candidates[0],score=-Infinity;
   for(const token of candidates){const value=logits[token];if(value>score){score=value;best=token;}}
@@ -915,7 +914,6 @@ async function predictAiSkeleton(){
     }else if(token===260||token===261||token===262){
       coordinateCount=0;
     }
-    if(completedJoints>=96&&coordinateCount%3===0&&branchCoordinatesRemaining===0)break;
     if(step%4===0){setStatus(`${executionProvider==='wasm'?'CPU（WebAssembly）で':''}AIが骨格を推定しています… ${completedJoints}関節`);await new Promise(resolve=>setTimeout(resolve,0));}
     const tokenInput=new ort.Tensor('int64',new BigInt64Array([BigInt(token)]),[1,1]);
     let tokenEmbedding;
@@ -936,6 +934,7 @@ async function predictAiSkeleton(){
       cache[name]=decoded[outputName];
     }
   }
+  if(tokens.at(-1)!==258)throw new Error('AI骨格が終了記号まで到達せず、結果が不完全です。骨格の表示は行いません。');
   if(!completedJoints)throw new Error('AIが骨格を生成できませんでした。モデルの向きや形状を確認してください。');
   for(const tensor of Object.values(cache))tensor.dispose?.();
   decoded?.[logitsName]?.dispose?.();

@@ -760,6 +760,26 @@ async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false
   return aiSessions;
 }
 
+function encodeMobileShapeInWorker(vertices,normals,pointCount){
+  return new Promise((resolve,reject)=>{
+    const worker=new Worker(new URL('./mobile-encoder-worker.js',import.meta.url),{type:'module'});
+    let settled=false;
+    const finish=(callback,value)=>{
+      if(settled)return;
+      settled=true;worker.terminate();callback(value);
+    };
+    worker.onmessage=event=>{
+      const message=event.data||{};
+      if(message.type==='status')setStatus(message.message);
+      else if(message.type==='done')finish(resolve,message);
+      else if(message.type==='error')finish(reject,new Error(message.message||'形状解析に失敗しました。'));
+    };
+    worker.onerror=event=>finish(reject,new Error(event.message||'形状解析の作業領域を開始できませんでした。'));
+    try{worker.postMessage({vertices,normals,pointCount},[vertices.buffer,normals.buffer]);}
+    catch(error){finish(reject,error);}
+  });
+}
+
 async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
   const isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
@@ -779,23 +799,33 @@ async function predictAiSkeleton(){
   const useCpuEncoder=isMobile&&executionProvider==='webgpu';
   const encoderExecutionProvider=useCpuEncoder?'wasm':executionProvider;
   const stagedMobileLoad=isMobile&&executionProvider==='webgpu';
-  const {encoder}=await loadAiSessions(ort,executionProvider,useCpuEncoder,stagedMobileLoad?'encoder':'all');
-  const surfaceSampleCount=isMobile?2048:16384;
+  const encoder=useCpuEncoder?null:(await loadAiSessions(ort,executionProvider,false,'all')).encoder;
+  const surfaceSampleCount=isMobile?1024:16384;
   setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':`${isMobile?'スマートフォン向けに点数を抑えて':''}モデル表面から点と法線を抽出しています…`);
   const cloud=sampleModelSurface(surfaceSampleCount);
-  const vertexTensor=new ort.Tensor('float32',cloud.vertices,[1,surfaceSampleCount,3]);
-  const normalTensor=new ort.Tensor('float32',cloud.normals,[1,surfaceSampleCount,3]);
-  const encoderInputs={};
-  const vertexInput=encoder.inputNames.find(name=>/vertices|points/i.test(name))||encoder.inputNames[0];
-  const normalInput=encoder.inputNames.find(name=>/normals/i.test(name))||encoder.inputNames[1];
-  encoderInputs[vertexInput]=vertexTensor;encoderInputs[normalInput]=normalTensor;
-  setStatus(useCpuEncoder?'スマートフォン内のCPU（WebAssembly）で形状を解析しています…':executionProvider==='wasm'?'CPU（WebAssembly）でAIが形状を解析しています…':'AIが形状を解析しています…');
-  let encoded;
-  try{encoded=await encoder.run(encoderInputs);}
-  catch(error){throw new Error(`形状解析（${encoderExecutionProvider==='wasm'?'CPU':'GPU'}）中に失敗しました: ${error.message||error}`);}
-  const latentName=encoder.outputNames.find(name=>/latent/i.test(name))||encoder.outputNames[0];
-  const latents=encoded[latentName];
-  if(isMobile){
+  let latents,latentFeatureWidth,sourceLatentCount;
+  if(useCpuEncoder){
+    const mobileResult=await encodeMobileShapeInWorker(cloud.vertices,cloud.normals,surfaceSampleCount);
+    latents={data:mobileResult.latentData};
+    latentFeatureWidth=mobileResult.featureWidth;
+    sourceLatentCount=mobileResult.latentCount;
+  }else{
+    const vertexTensor=new ort.Tensor('float32',cloud.vertices,[1,surfaceSampleCount,3]);
+    const normalTensor=new ort.Tensor('float32',cloud.normals,[1,surfaceSampleCount,3]);
+    const encoderInputs={};
+    const vertexInput=encoder.inputNames.find(name=>/vertices|points/i.test(name))||encoder.inputNames[0];
+    const normalInput=encoder.inputNames.find(name=>/normals/i.test(name))||encoder.inputNames[1];
+    encoderInputs[vertexInput]=vertexTensor;encoderInputs[normalInput]=normalTensor;
+    setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でAIが形状を解析しています…':'AIが形状を解析しています…');
+    let encoded;
+    try{encoded=await encoder.run(encoderInputs);}
+    catch(error){throw new Error(`形状解析（${encoderExecutionProvider==='wasm'?'CPU':'GPU'}）中に失敗しました: ${error.message||error}`);}
+    const latentName=encoder.outputNames.find(name=>/latent/i.test(name))||encoder.outputNames[0];
+    latents=encoded[latentName];
+    latentFeatureWidth=latents.dims.at(-1)||1024;
+    sourceLatentCount=latents.dims[1]||Math.floor(latents.data.length/latentFeatureWidth);
+  }
+  if(encoder&&isMobile){
     try{await encoder.release();}
     finally{if(aiSessions?.encoder===encoder)aiSessions.encoder=null;}
   }
@@ -814,9 +844,7 @@ async function predictAiSkeleton(){
   try{embedded=await embed.run({[embed.inputNames[0]]:ids});}
   catch(error){throw new Error(`AI入力の埋め込み処理に失敗しました（${useCpuEncoder?'端末内CPU':'GPU'}）: ${error.message||error}`);}
   const prompt=embedded[embed.outputNames[0]];
-  const latentFeatureWidth=latents.dims.at(-1)||1024;
-  const sourceLatentCount=latents.dims[1]||Math.floor(latents.data.length/latentFeatureWidth);
-  const mobileLatentCount=isMobile?Math.min(256,sourceLatentCount):sourceLatentCount;
+  const mobileLatentCount=isMobile?Math.min(128,sourceLatentCount):sourceLatentCount;
   let decoderLatents=latents.data;
   if(mobileLatentCount<sourceLatentCount){
     setStatus(`スマートフォン用に形状情報を${mobileLatentCount}個へ圧縮しています…`);

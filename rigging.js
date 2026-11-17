@@ -698,7 +698,8 @@ function allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoo
 }
 
 async function loadAiSessions(ort,executionProvider='webgpu'){
-  if(aiSessions?.executionProvider===executionProvider)return aiSessions;
+  const canReuse=aiSessions?.executionProvider===executionProvider;
+  if(canReuse&&aiSessions.encoder&&aiSessions.embed&&aiSessions.decoder)return aiSessions;
   const base='https://huggingface.co/cgb/unirig-skeleton-onnx-webgpu/resolve/main/';
   const options={executionProviders:[executionProvider],graphOptimizationLevel:'all'};
   ort.env.wasm.proxy=false;
@@ -725,10 +726,12 @@ async function loadAiSessions(ort,executionProvider='webgpu'){
     }
     return ort.InferenceSession.create(modelBytes,sessionOptions);
   };
-  const encoder=await createSession('encoder_q8.onnx','encoder_q8.onnx.data');
-  setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');
-  const embed=await createSession('embed.onnx');
-  const decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data',executionProvider==='webgpu');
+  let encoder=canReuse?aiSessions.encoder:null;
+  let embed=canReuse?aiSessions.embed:null;
+  let decoder=canReuse?aiSessions.decoder:null;
+  if(!encoder)encoder=await createSession('encoder_q8.onnx','encoder_q8.onnx.data');
+  if(!embed){setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');embed=await createSession('embed.onnx');}
+  if(!decoder)decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data',executionProvider==='webgpu');
   aiSessions={ort,encoder,embed,decoder,executionProvider};
   return aiSessions;
 }
@@ -763,10 +766,16 @@ async function predictAiSkeleton(){
   let encoded;
   try{encoded=await encoder.run(encoderInputs);}
   catch(error){throw new Error(`形状解析中にGPUが停止しました: ${error.message||error}`);}
+  if(isMobile&&executionProvider==='webgpu'){
+    try{await encoder.release();}
+    finally{if(aiSessions?.encoder===encoder)aiSessions.encoder=null;}
+  }
   const latentName=encoder.outputNames.find(name=>/latent/i.test(name))||encoder.outputNames[0];
   const latents=encoded[latentName];
   const ids=new ort.Tensor('int64',new BigInt64Array([257n,266n]),[1,2]);
-  const embedded=await embed.run({[embed.inputNames[0]]:ids});
+  let embedded;
+  try{embedded=await embed.run({[embed.inputNames[0]]:ids});}
+  catch(error){throw new Error(`AI入力の埋め込み中にGPUが停止しました: ${error.message||error}`);}
   const prompt=embedded[embed.outputNames[0]];
   const prefill=new Float32Array(latents.data.length+prompt.data.length);
   prefill.set(latents.data,0);prefill.set(prompt.data,latents.data.length);
@@ -825,7 +834,9 @@ async function predictAiSkeleton(){
     if(completedJoints>=96&&coordinateCount%3===0&&branchCoordinatesRemaining===0)break;
     if(step%4===0){setStatus(`${executionProvider==='wasm'?'CPU（WebAssembly）で':''}AIが骨格を推定しています… ${completedJoints}関節`);await new Promise(resolve=>setTimeout(resolve,0));}
     const tokenInput=new ort.Tensor('int64',new BigInt64Array([BigInt(token)]),[1,1]);
-    const tokenEmbedding=await embed.run({[embed.inputNames[0]]:tokenInput});
+    let tokenEmbedding;
+    try{tokenEmbedding=await embed.run({[embed.inputNames[0]]:tokenInput});}
+    catch(error){throw new Error(`関節 ${step+1} の入力変換中にGPUが停止しました: ${error.message||error}`);}
     const nextEmbedding=tokenEmbedding[embed.outputNames[0]];
     const nextFeeds={inputs_embeds:nextEmbedding};
     for(const name of pastInputs)nextFeeds[name]=cache[name];

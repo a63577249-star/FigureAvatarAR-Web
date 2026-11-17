@@ -27,6 +27,8 @@ const autoButton = document.querySelector('#auto-place');
 const generateButton = document.querySelector('#generate');
 const exportButton = document.querySelector('#export');
 const aiRigButton = document.querySelector('#ai-auto-rig');
+const IS_MOBILE_DEVICE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+  ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const viewHelp = document.querySelector('#view-help');
 const boneDepth = document.querySelector('#bone-depth');
 const boneDepthValue = document.querySelector('#bone-depth-value');
@@ -40,6 +42,8 @@ const regionToggle = document.querySelector('#region-toggle');
 const regionModeSelect = document.querySelector('#region-mode');
 const regionDetectButton = document.querySelector('#region-detect');
 const regionAxisInputs = Array.from(document.querySelectorAll('[data-region-axis]'));
+
+if(IS_MOBILE_DEVICE)aiRigButton.textContent='スマホ向け簡易骨格を配置（19関節）';
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#121a27');
@@ -781,8 +785,7 @@ function encodeMobileShapeInWorker(vertices,normals,pointCount){
 
 async function predictAiSkeleton(){
   if(!modelRoot||!modelEntries.length)throw new Error('先にモデルを読み込んでください。');
-  const isMobile=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
-    ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  const isMobile=IS_MOBILE_DEVICE;
   const webGpuApiAvailable=!!navigator.gpu;
   let executionProvider='webgpu',adapter=null;
   try{if(navigator.gpu)adapter=await navigator.gpu.requestAdapter();}catch(error){console.warn('WebGPU adapter check failed.',error);}
@@ -993,6 +996,13 @@ async function runAiAutoRig(){
   if(!modelRoot){setStatus('先にボーンのないGLB、glTF、OBJモデルを読み込んでください。');return;}
   aiRigButton.disabled=true;
   try{
+    if(IS_MOBILE_DEVICE){
+      restoreTemplateBoneDefs();
+      placeStandardRig();
+      autoButton.textContent='標準19関節に戻す';
+      setStatus('スマートフォンではページの再読み込みを防ぐため、大型AIモデルを起動せず標準19関節を配置しました。モデルに合わせて関節位置を調整し、ウェイトを生成してください。PCではAI自動推定を利用できます。');
+      return;
+    }
     const prediction=await predictAiSkeleton();
     const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest);
     if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');

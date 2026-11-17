@@ -715,7 +715,10 @@ async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false
     const modelResponse=await fetch(base+modelName);
     if(!modelResponse.ok)throw new Error(`${modelName}の取得に失敗しました（HTTP ${modelResponse.status}）。`);
     let modelBytes=new Uint8Array(await modelResponse.arrayBuffer());
-    const sessionOptions={executionProviders:[sessionProvider],graphOptimizationLevel:'all'};
+    const providerOptions=sessionProvider==='webgpu'&&useCpuEncoder
+      ?{name:'webgpu',storageBufferCacheMode:'disabled',uniformBufferCacheMode:'disabled',queryResolveBufferCacheMode:'disabled',defaultBufferCacheMode:'disabled'}
+      :sessionProvider;
+    const sessionOptions={executionProviders:[providerOptions],graphOptimizationLevel:'all'};
     if(keepOutputsOnGpu)sessionOptions.preferredOutputLocation='gpu-buffer';
     let externalData=null;
     if(externalDataName){
@@ -806,8 +809,26 @@ async function predictAiSkeleton(){
   try{embedded=await embed.run({[embed.inputNames[0]]:ids});}
   catch(error){throw new Error(`AI入力の埋め込み中にGPUが停止しました: ${error.message||error}`);}
   const prompt=embedded[embed.outputNames[0]];
-  const prefill=new Float32Array(latents.data.length+prompt.data.length);
-  prefill.set(latents.data,0);prefill.set(prompt.data,latents.data.length);
+  const latentFeatureWidth=latents.dims.at(-1)||1024;
+  const sourceLatentCount=latents.dims[1]||Math.floor(latents.data.length/latentFeatureWidth);
+  const mobileLatentCount=isMobile?Math.min(256,sourceLatentCount):sourceLatentCount;
+  let decoderLatents=latents.data;
+  if(mobileLatentCount<sourceLatentCount){
+    setStatus(`スマートフォン用に形状情報を${mobileLatentCount}個へ圧縮しています…`);
+    decoderLatents=new Float32Array(mobileLatentCount*latentFeatureWidth);
+    for(let target=0;target<mobileLatentCount;target++){
+      const first=Math.floor(target*sourceLatentCount/mobileLatentCount);
+      const last=Math.max(first+1,Math.floor((target+1)*sourceLatentCount/mobileLatentCount));
+      const divisor=last-first;
+      for(let feature=0;feature<latentFeatureWidth;feature++){
+        let sum=0;
+        for(let source=first;source<last;source++)sum+=latents.data[source*latentFeatureWidth+feature];
+        decoderLatents[target*latentFeatureWidth+feature]=sum/divisor;
+      }
+    }
+  }
+  const prefill=new Float32Array(decoderLatents.length+prompt.data.length);
+  prefill.set(decoderLatents,0);prefill.set(prompt.data,decoderLatents.length);
   const pastInputs=decoder.inputNames.filter(name=>/^past\./.test(name));
   if(!pastInputs.length)throw new Error('AIモデルのキャッシュ入力形式を認識できません。');
   const logitsName=decoder.outputNames.find(name=>/logits/i.test(name))||decoder.outputNames[0];

@@ -708,12 +708,13 @@ async function loadAiSessions(ort,executionProvider='webgpu'){
     mjs:new URL('ort-wasm-simd-threaded.asyncify.mjs',ortRuntimeBase).href,
     wasm:new URL('ort-wasm-simd-threaded.asyncify.wasm',ortRuntimeBase).href
   };
-  const createSession=async(modelName,externalDataName=null)=>{
+  const createSession=async(modelName,externalDataName=null,keepOutputsOnGpu=false)=>{
     setStatus(`AIモデルを取得しています: ${modelName}${externalDataName?' と外部データ':''}…`);
     const modelResponse=await fetch(base+modelName);
     if(!modelResponse.ok)throw new Error(`${modelName}の取得に失敗しました（HTTP ${modelResponse.status}）。`);
     const modelBytes=new Uint8Array(await modelResponse.arrayBuffer());
     const sessionOptions={...options};
+    if(keepOutputsOnGpu)sessionOptions.preferredOutputLocation='gpu-buffer';
     if(externalDataName){
       const dataResponse=await fetch(base+externalDataName);
       if(!dataResponse.ok)throw new Error(`${externalDataName}の取得に失敗しました（HTTP ${dataResponse.status}）。`);
@@ -727,7 +728,7 @@ async function loadAiSessions(ort,executionProvider='webgpu'){
   const encoder=await createSession('encoder_q8.onnx','encoder_q8.onnx.data');
   setStatus('AIモデルを読み込んでいます…（エンコーダー完了）');
   const embed=await createSession('embed.onnx');
-  const decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data');
+  const decoder=await createSession('decoder_q8.onnx','decoder_q8.onnx.data',executionProvider==='webgpu');
   aiSessions={ort,encoder,embed,decoder,executionProvider};
   return aiSessions;
 }
@@ -769,24 +770,40 @@ async function predictAiSkeleton(){
   prefill.set(latents.data,0);prefill.set(prompt.data,latents.data.length);
   const pastInputs=decoder.inputNames.filter(name=>/^past\./.test(name));
   if(!pastInputs.length)throw new Error('AIモデルのキャッシュ入力形式を認識できません。');
-  const feeds={inputs_embeds:new ort.Tensor('float32',prefill,[1,1026,1024])};
-  for(const name of pastInputs)feeds[name]=new ort.Tensor('float32',new Float32Array(0),[1,16,0,64]);
-  let decoded=await decoder.run(feeds);
   const logitsName=decoder.outputNames.find(name=>/logits/i.test(name))||decoder.outputNames[0];
   const cacheForInput=name=>name.replace(/^past\./,'present.');
+  const prefillTokenCount=prefill.length/1024;
+  const prefillChunkSize=executionProvider==='webgpu'?(isMobile?64:128):prefillTokenCount;
+  let decoded=null;
   let cache={};
-  for(const inputName of pastInputs){
-    const outputName=cacheForInput(inputName);
-    if(!decoded[outputName])throw new Error(`AIモデルのキャッシュ出力がありません: ${outputName}`);
-    cache[inputName]=decoded[outputName];
+  for(let offset=0;offset<prefillTokenCount;offset+=prefillChunkSize){
+    const chunkLength=Math.min(prefillChunkSize,prefillTokenCount-offset);
+    const feeds={inputs_embeds:new ort.Tensor('float32',prefill.subarray(offset*1024,(offset+chunkLength)*1024),[1,chunkLength,1024])};
+    for(const name of pastInputs)feeds[name]=cache[name]||new ort.Tensor('float32',new Float32Array(0),[1,16,0,64]);
+    const previousCache=cache;
+    decoded=await decoder.run(feeds);
+    for(const tensor of Object.values(previousCache))tensor.dispose?.();
+    cache={};
+    for(const inputName of pastInputs){
+      const outputName=cacheForInput(inputName);
+      if(!decoded[outputName])throw new Error(`AIモデルのキャッシュ出力がありません: ${outputName}`);
+      cache[inputName]=decoded[outputName];
+    }
+    if(offset+chunkLength<prefillTokenCount)decoded[logitsName]?.dispose?.();
+    if(prefillChunkSize<prefillTokenCount){
+      setStatus(`${isMobile?'スマートフォン向けに':''}AIモデルを分割処理しています… ${Math.min(offset+chunkLength,prefillTokenCount)}/${prefillTokenCount}`);
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
   }
   const tokens=[];
   let coordinateCount=0,branchCoordinatesRemaining=0,completedJoints=0,hasCoordinates=false;
   for(let step=0;step<512;step++){
     const logitsTensor=decoded[logitsName],vocab=267;
     const sequenceLength=logitsTensor.dims[1];
-    const logits=logitsTensor.data.subarray((sequenceLength-1)*vocab,sequenceLength*vocab);
+    const logitsData=executionProvider==='webgpu'?await logitsTensor.getData():logitsTensor.data;
+    const logits=logitsData.subarray((sequenceLength-1)*vocab,sequenceLength*vocab);
     const token=allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates);
+    logitsTensor.dispose?.();
     if(token===258){tokens.push(token);break;}
     tokens.push(token);
     if(token<256){
@@ -807,7 +824,10 @@ async function predictAiSkeleton(){
     const nextEmbedding=tokenEmbedding[embed.outputNames[0]];
     const nextFeeds={inputs_embeds:nextEmbedding};
     for(const name of pastInputs)nextFeeds[name]=cache[name];
+    const previousCache=cache;
     decoded=await decoder.run(nextFeeds);
+    nextEmbedding.dispose?.();
+    for(const tensor of Object.values(previousCache))tensor.dispose?.();
     cache={};
     for(const name of pastInputs){
       const outputName=cacheForInput(name);
@@ -816,6 +836,8 @@ async function predictAiSkeleton(){
     }
   }
   if(!completedJoints)throw new Error('AIが骨格を生成できませんでした。モデルの向きや形状を確認してください。');
+  for(const tensor of Object.values(cache))tensor.dispose?.();
+  decoded?.[logitsName]?.dispose?.();
   return {tokens,center:cloud.center,longest:cloud.longest};
 }
 

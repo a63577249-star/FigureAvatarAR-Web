@@ -844,7 +844,7 @@ async function predictAiSkeleton(){
   try{embedded=await embed.run({[embed.inputNames[0]]:ids});}
   catch(error){throw new Error(`AI入力の埋め込み処理に失敗しました（${useCpuEncoder?'端末内CPU':'GPU'}）: ${error.message||error}`);}
   const prompt=embedded[embed.outputNames[0]];
-  const mobileLatentCount=isMobile?Math.min(256,sourceLatentCount):sourceLatentCount;
+  const mobileLatentCount=sourceLatentCount;
   let decoderLatents=latents.data;
   if(mobileLatentCount<sourceLatentCount){
     setStatus(`スマートフォン用に形状情報を${mobileLatentCount}個へ圧縮しています…`);

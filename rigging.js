@@ -800,7 +800,8 @@ async function predictAiSkeleton(){
   const encoderExecutionProvider=useCpuEncoder?'wasm':executionProvider;
   const stagedMobileLoad=isMobile&&executionProvider==='webgpu';
   const encoder=useCpuEncoder?null:(await loadAiSessions(ort,executionProvider,false,'all')).encoder;
-  const surfaceSampleCount=isMobile?1024:16384;
+  // The encoder's learned gather table indexes all 2048 mobile samples.
+  const surfaceSampleCount=isMobile?2048:16384;
   setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':`${isMobile?'スマートフォン向けに点数を抑えて':''}モデル表面から点と法線を抽出しています…`);
   const cloud=sampleModelSurface(surfaceSampleCount);
   let latents,latentFeatureWidth,sourceLatentCount;

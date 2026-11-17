@@ -761,7 +761,7 @@ async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false
 
 function encodeMobileShapeInWorker(vertices,normals,pointCount){
   return new Promise((resolve,reject)=>{
-    const worker=new Worker(new URL('./mobile-encoder-worker.js?v=mobile-latent-256-20261117',import.meta.url),{type:'module'});
+    const worker=new Worker(new URL('./mobile-encoder-worker.js?v=mobile-latent-128-20261117',import.meta.url),{type:'module'});
     let settled=false;
     const finish=(callback,value)=>{
       if(settled)return;
@@ -867,7 +867,7 @@ async function predictAiSkeleton(){
   const logitsName=decoder.outputNames.find(name=>/logits/i.test(name))||decoder.outputNames[0];
   const cacheForInput=name=>name.replace(/^past\./,'present.');
   const prefillTokenCount=prefill.length/1024;
-  const prefillChunkSize=executionProvider==='webgpu'?(isMobile?32:128):prefillTokenCount;
+  const prefillChunkSize=executionProvider==='webgpu'?(isMobile?16:128):prefillTokenCount;
   let decoded=null;
   let cache={};
   for(let offset=0;offset<prefillTokenCount;offset+=prefillChunkSize){
@@ -892,14 +892,20 @@ async function predictAiSkeleton(){
   }
   const tokens=[];
   let coordinateCount=0,branchCoordinatesRemaining=0,completedJoints=0,hasCoordinates=false;
-  for(let step=0;step<512;step++){
+  const maxGeneratedTokens=isMobile?288:512;
+  for(let step=0;step<maxGeneratedTokens;step++){
     const logitsTensor=decoded[logitsName],vocab=267;
     const sequenceLength=logitsTensor.dims[1];
     let logitsData;
     try{logitsData=executionProvider==='webgpu'?await logitsTensor.getData():logitsTensor.data;}
     catch(error){throw new Error(`関節 ${step+1} の結果取得中にGPUが停止しました: ${error.message||error}`);}
     const logits=logitsData.subarray((sequenceLength-1)*vocab,sequenceLength*vocab);
-    const token=allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates);
+    const canEndAtBoundary=branchCoordinatesRemaining===0&&coordinateCount%6===0&&hasCoordinates;
+    // Keep mobile KV-cache growth bounded. End only between complete joints,
+    // where EOS is a valid token in the model's sequence grammar.
+    const token=isMobile&&step>=256&&canEndAtBoundary
+      ?258
+      :allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates);
     logitsTensor.dispose?.();
     if(token===258){tokens.push(token);break;}
     tokens.push(token);

@@ -43,9 +43,9 @@ self.onmessage = async event => {
     const sourceCount = latent.dims[1] || Math.floor(latent.data.length / featureWidth);
     // Safari cannot reliably retain the decoder's full 1024-token KV cache
     // alongside its ~393 MB model weights. Pool the mobile encoder output to
-    // reduce both prefill memory and persistent decoder cache by 4x.
+    // reduce both prefill memory and persistent decoder cache by up to 8x.
     // Desktop inference continues to use the full encoder context.
-    const targetCount = Math.min(sourceCount, 256);
+    const targetCount = Math.min(sourceCount, 128);
     self.postMessage({ type: 'status', message: `スマートフォン用に形状情報を${targetCount}個へ圧縮しています…` });
     const compact = new Float32Array(targetCount * featureWidth);
     for (let target = 0; target < targetCount; target++) {

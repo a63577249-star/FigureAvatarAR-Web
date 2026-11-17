@@ -719,7 +719,9 @@ async function loadAiSessions(ort,executionProvider='webgpu',useCpuEncoder=false
     if(!modelResponse.ok)throw new Error(`${modelName}の取得に失敗しました（HTTP ${modelResponse.status}）。`);
     let modelBytes=new Uint8Array(await modelResponse.arrayBuffer());
     const providerOptions=sessionProvider==='webgpu'&&useCpuEncoder&&keepOutputsOnGpu
-      ?{name:'webgpu',storageBufferCacheMode:'disabled',uniformBufferCacheMode:'disabled',queryResolveBufferCacheMode:'disabled',defaultBufferCacheMode:'disabled'}
+      // Keep ORT's bucketed storage buffers: disabling them can leave zero-length
+      // KV-cache inputs backed by a 1-byte buffer, below WebGPU's 32-byte binding minimum.
+      ?{name:'webgpu',storageBufferCacheMode:'bucket'}
       :sessionProvider;
     const sessionOptions={executionProviders:[providerOptions],graphOptimizationLevel:'all'};
     if(keepOutputsOnGpu)sessionOptions.preferredOutputLocation='gpu-buffer';

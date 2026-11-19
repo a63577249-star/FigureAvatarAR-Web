@@ -1304,7 +1304,8 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       ||(!namedDistalLimb&&isDistalLimb&&midpointY>=modelBounds.min.y+modelExtent.y*0.48
         &&Math.abs(midpointX-modelCenter.x)>Math.max(modelExtent.x*0.18,rootSize*0.04));
     const isArmInfluence=isArmLimb||/^(Left|Right)Shoulder$/.test(childName);
-    return {name:childName,a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb,isArmInfluence};
+    const isFootInfluence=/^(Left|Right)Ankle$/.test(childName);
+    return {name:childName,a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb,isArmInfluence,isFootInfluence};
   }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
   const directSegmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
@@ -1364,10 +1365,23 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       if(distance<nearestDistance){nearestDistance=distance;primaryIndex=s;primaryT=t;}
       if(!armSurface&&seg.isCore&&distance<coreDistance){coreDistance=distance;coreIndex=s;coreT=t;}
     }
+    // The simplified rig has no toe bone. Vertices immediately below and near
+    // an ankle must therefore follow that ankle instead of falling back to hip
+    // or torso weights, which leaves the toes stretched in place.
+    let footSegmentIndex=-1,footHorizontalDistance=Infinity;
+    for(let s=0;s<segmentData.length;s++){
+      const seg=segmentData[s];if(!seg.isFootInfluence)continue;
+      const dx=px-seg.bx,dz=pz-seg.bz,horizontalDistance=Math.hypot(dx,dz);
+      if(py<=seg.by+rootSize*0.025&&py>=seg.by-rootSize*0.14&&horizontalDistance<=rootSize*0.17&&horizontalDistance<footHorizontalDistance){
+        footSegmentIndex=s;footHorizontalDistance=horizontalDistance;
+      }
+    }
+    const isFootRegion=footSegmentIndex>=0;
+    if(isFootRegion){primaryIndex=footSegmentIndex;primaryT=1;nearestDistance=footHorizontalDistance;}
     // Do not let a leg or forearm capture remote clothing/accessories merely
     // because it is the nearest of all bones. If it is outside the segment's
     // local reach, anchor it to the closest torso segment instead.
-    if(!armSurface&&segmentData[primaryIndex].isDistalLimb){
+    if(!isFootRegion&&!armSurface&&segmentData[primaryIndex].isDistalLimb){
       const limbReach=influenceReach(segmentData[primaryIndex]);
       if(nearestDistance>limbReach&&coreIndex>=0){primaryIndex=coreIndex;primaryT=coreT;nearestDistance=coreDistance;}
     }
@@ -1377,7 +1391,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     fallbackBones[v]=primaryT<0.5?base.a:base.b;
     let secondaryIndex=-1,bestGap=Infinity;
     const primarySegment=segmentData[primaryIndex];
-    for(const candidate of directSegmentAdj[primaryIndex]){
+    for(const candidate of (isFootRegion?[]:directSegmentAdj[primaryIndex])){
       const candidateSegment=segmentData[candidate];
       if(isHeadRegion&&candidateSegment.isArmInfluence)continue;
       if(!shoulderSegmentApplies(candidateSegment,px,py,pz))continue;

@@ -578,16 +578,48 @@ autoButton.addEventListener('click',()=>{
 });
 fileInput.addEventListener('change',event=>loadModel(Array.from(event.target.files||[])));
 
-function makeAdjacency(geometry, vertexCount) {
-  const sets=Array.from({length:vertexCount},()=>new Set());
+function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
+  const rows=Array.from({length:vertexCount},()=>new Map());
   const index=geometry.index?.array;
   const count=index?index.length:vertexCount;
   const at=i=>index?index[i]:i;
+  const add=(a,b,weight)=>{
+    if(a===b||!Number.isFinite(weight)||weight<=0)return;
+    rows[a].set(b,(rows[a].get(b)||0)+weight);
+  };
+  const cotangent=(ax,ay,az,bx,by,bz,cx,cy,cz)=>{
+    const ux=ax-cx,uy=ay-cy,uz=az-cz,vx=bx-cx,vy=by-cy,vz=bz-cz;
+    const dot=ux*vx+uy*vy+uz*vz;
+    const cxv=uy*vz-uz*vy,cyv=uz*vx-ux*vz,czv=ux*vy-uy*vx;
+    const area=Math.hypot(cxv,cyv,czv);
+    return area>1e-12?Math.max(0,dot/area):0;
+  };
+  const stableCotangent=(...points)=>cotangent(...points)+0.001;
   for(let i=0;i+2<count;i+=3){
     const a=at(i),b=at(i+1),c=at(i+2);
-    sets[a].add(b);sets[a].add(c);sets[b].add(a);sets[b].add(c);sets[c].add(a);sets[c].add(b);
+    const ax=positions[a*3],ay=positions[a*3+1],az=positions[a*3+2];
+    const bx=positions[b*3],by=positions[b*3+1],bz=positions[b*3+2];
+    const cx=positions[c*3],cy=positions[c*3+1],cz=positions[c*3+2];
+    // Cotangent edge weights approximate the mesh-surface Laplacian used by
+    // bone-heat methods. Clamp negative cotangents for stable browser diffusion.
+    add(a,b,stableCotangent(ax,ay,az,bx,by,bz,cx,cy,cz));
+    add(b,a,stableCotangent(ax,ay,az,bx,by,bz,cx,cy,cz));
+    add(b,c,stableCotangent(bx,by,bz,cx,cy,cz,ax,ay,az));
+    add(c,b,stableCotangent(bx,by,bz,cx,cy,cz,ax,ay,az));
+    add(c,a,stableCotangent(cx,cy,cz,ax,ay,az,bx,by,bz));
+    add(a,c,stableCotangent(cx,cy,cz,ax,ay,az,bx,by,bz));
   }
-  return sets.map(set=>Array.from(set));
+  const neighbors=new Array(vertexCount),weights=new Array(vertexCount);
+  for(let v=0;v<vertexCount;v++){
+    const row=rows[v];
+    if(!row.size){neighbors[v]=[];weights[v]=new Float32Array(0);continue;}
+    let total=0;for(const value of row.values())total+=value;
+    const ids=Array.from(row.keys()),normalized=new Float32Array(ids.length);
+    if(total<=1e-12)normalized.fill(1/ids.length);
+    else for(let i=0;i<ids.length;i++)normalized[i]=row.get(ids[i])/total;
+    neighbors[v]=ids;weights[v]=normalized;
+  }
+  return {neighbors,weights};
 }
 
 function coincidentVertexGroups(positions, scale) {
@@ -1177,19 +1209,19 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   }
 
   const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
-  const adjacency=lightweightPhoneMode?null:makeAdjacency(geometry,count);
+  const diffusionGraph=lightweightPhoneMode?null:makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
   let next=new Float32Array(dense.length);
-  for(let iteration=0;adjacency&&iteration<4;iteration++){
+  for(let iteration=0;diffusionGraph&&iteration<8;iteration++){
     for(let v=0;v<count;v++){
       if(v>0&&v%8192===0)await new Promise(resolve=>requestAnimationFrame(resolve));
-      const offset=v*boneCount,neighbors=adjacency[v];
+      const offset=v*boneCount,neighbors=diffusionGraph.neighbors[v],neighborWeights=diffusionGraph.weights[v];
       if(!neighbors.length){next.set(dense.subarray(offset,offset+boneCount),offset);continue;}
-      const self=.5,other=.5/neighbors.length;
+      const self=.35,neighborMix=.65;
       for(let b=0;b<boneCount;b++){
         if(!allowedInfluences[offset+b]){next[offset+b]=0;continue;}
         let value=dense[offset+b]*self;
-        for(const n of neighbors)value+=dense[n*boneCount+b]*other;
+        for(let n=0;n<neighbors.length;n++)value+=dense[neighbors[n]*boneCount+b]*neighborWeights[n]*neighborMix;
         next[offset+b]=value;
       }
       normalizeAllowedWeights(next,offset,offset,boneCount,allowedInfluences,fallbackBones[v]);
@@ -1280,8 +1312,8 @@ async function generateRigAndWeights(){
     exportButton.disabled=false;
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
     const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
-    const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個の平滑化を省いた軽量計算を使いました。`:'';
-    setStatus(`リギングを生成しました。${modelEntries.length}個のMeshを処理し、部位指定した${assignedCount.toLocaleString()}頂点へ指定ボーンのウェイトを適用しました。${phoneNote}動作を確認してGLBを保存してください。`);
+    const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個はメモリ保護のため表面平滑化を省きました。`:'';
+    setStatus(`リギングを生成しました。メッシュ表面に沿うBone Heat風の拡散でウェイトをなじませ、部位指定した${assignedCount.toLocaleString()}頂点は指定ボーンを優先しました。${phoneNote}Blenderと同じ計算ではないため、関節の変形を確認してGLBを保存してください。`);
   }catch(error){
     console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
   }

@@ -1178,12 +1178,23 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const sourcePositions=geometry.attributes.position;
   const count=sourcePositions.count,boneCount=BONE_DEFS.length;
   const rootVertices=entry.rootPositions;
+  const modelBounds=modelLocalBounds(),modelCenter=modelBounds.getCenter(new THREE.Vector3()),modelExtent=modelBounds.getSize(new THREE.Vector3());
   const indexByName=new Map(BONE_DEFS.map((bone,index)=>[bone.name,index]));
   const segmentData=BONE_DEFS.map((bone,index)=>{
     if(!bone.parent||!indexByName.has(bone.parent))return null;
     const a=indexByName.get(bone.parent),start=BONE_DEFS[a].position,end=bone.position;
     const abx=end.x-start.x,aby=end.y-start.y,abz=end.z-start.z;
-    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz};
+    const childName=bone.name;
+    const namedDistalLimb=/^(Left|Right)(UpperArm|Elbow|Wrist|UpperLeg|Knee|Ankle)$/.test(childName);
+    const midpointX=(start.x+end.x)*0.5,midpointY=(start.y+end.y)*0.5;
+    const centralSpine=Math.abs(midpointX-modelCenter.x)<=Math.max(modelExtent.x*0.14,rootSize*0.03)
+      &&midpointY>=modelBounds.min.y+modelExtent.y*0.28
+      &&midpointY<=modelBounds.max.y-modelExtent.y*0.12;
+    const isCore=['supine','chest','neck','head'].includes(childName)||(!namedDistalLimb&&centralSpine);
+    const isDistalLimb=namedDistalLimb
+      ||(!isCore&&(midpointY<modelBounds.min.y+modelExtent.y*0.58
+        ||Math.abs(midpointX-modelCenter.x)>Math.max(modelExtent.x*0.18,rootSize*0.04)));
+    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore};
   }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
   const segmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
@@ -1195,6 +1206,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     if(v>0&&v%4096===0){setStatus(`ウェイトを計算しています… ${Math.floor(v/count*100)}%`);await new Promise(resolve=>requestAnimationFrame(resolve));}
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2];
     let primaryIndex=-1,primaryT=0,nearestDistance=Infinity;
+    let coreIndex=-1,coreT=0,coreDistance=Infinity;
     for(let s=0;s<segmentData.length;s++){
       const seg=segmentData[s],dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
       const t=seg.lengthSq>1e-12?THREE.MathUtils.clamp((dx*seg.abx+dy*seg.aby+dz*seg.abz)/seg.lengthSq,0,1):0;
@@ -1202,13 +1214,26 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       const ox=px-cx,oy=py-cy,oz=pz-cz,distance=Math.sqrt(ox*ox+oy*oy+oz*oz);
       hitDistances[s]=distance;hitParameters[s]=t;
       if(distance<nearestDistance){nearestDistance=distance;primaryIndex=s;primaryT=t;}
+      if(seg.isCore&&distance<coreDistance){coreDistance=distance;coreIndex=s;coreT=t;}
+    }
+    // Do not let a leg or forearm capture remote clothing/accessories merely
+    // because it is the nearest of all bones. If it is outside the segment's
+    // local reach, anchor it to the closest torso segment instead.
+    if(segmentData[primaryIndex].isDistalLimb){
+      const limbReach=Math.max(rootSize*0.035,Math.sqrt(segmentData[primaryIndex].lengthSq)*0.35);
+      if(nearestDistance>limbReach&&coreIndex>=0){primaryIndex=coreIndex;primaryT=coreT;nearestDistance=coreDistance;}
     }
     const base=segmentData[primaryIndex],offset=v*boneCount;
     dense[offset+base.a]+=1-primaryT;dense[offset+base.b]+=primaryT;
     allowedInfluences[offset+base.a]=1;allowedInfluences[offset+base.b]=1;
     fallbackBones[v]=primaryT<0.5?base.a:base.b;
     let secondaryIndex=-1,bestGap=Infinity;
-    for(const candidate of segmentAdj[primaryIndex]){const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}}
+    for(const candidate of segmentAdj[primaryIndex]){
+      const candidateSegment=segmentData[candidate];
+      const candidateReach=Math.max(rootSize*0.035,Math.sqrt(candidateSegment.lengthSq)*0.35);
+      if(candidateSegment.isDistalLimb&&hitDistances[candidate]>candidateReach)continue;
+      const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}
+    }
     if(secondaryIndex>=0&&bestGap<=maxGap){
       const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex],amount=Math.exp(-(bestGap*bestGap)/(2*sigma*sigma));
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;

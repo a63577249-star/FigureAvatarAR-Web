@@ -260,6 +260,7 @@ async function loadModel(files) {
     setStatus(`${main.name}を読み込みました。${modelEntries.length}個のMeshが見つかりました。関節位置を確認してください。`);
   } catch (error) {
     console.error(error);
+    revokeOldModel();
     setStatus(`読み込みに失敗しました: ${error.message || error}`);
   }
 }
@@ -279,7 +280,7 @@ function modelLocalBounds() {
 function createRegionBox(){
   if(regionObject?.parent)regionObject.parent.remove(regionObject);
   regionTransform.detach();
-  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3());
+  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
   regionModelBounds=bounds.clone();
   const minSize=Math.max(size.length()*0.025,0.01);
   const boxHeight=Math.max(size.y*0.22,minSize),boxWidth=Math.max(size.x*0.42,minSize),boxDepth=Math.max(size.z*0.42,minSize);

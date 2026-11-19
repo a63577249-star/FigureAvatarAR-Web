@@ -1,0 +1,36 @@
+diff --git a/src/composables/useI18n.js b/src/composables/useI18n.js
+index ebd13bc..5505390 100644
+--- a/src/composables/useI18n.js
++++ b/src/composables/useI18n.js
+@@ -12,6 +12,9 @@ const STORAGE_KEY = 'uiLanguage'
+ const IDS = LANGUAGES.map((l) => l.id)
+ 
+ function initial() {
++  const params = typeof location === 'undefined' ? null : new URLSearchParams(location.search)
++  const requested = params?.get('lang')
++  if (IDS.includes(requested)) return requested
+   try {
+     const stored = localStorage.getItem(STORAGE_KEY)
+     if (IDS.includes(stored)) return stored
+diff --git a/src/core/i18n/index.js b/src/core/i18n/index.js
+index 24cac0d..6941e72 100644
+--- a/src/core/i18n/index.js
++++ b/src/core/i18n/index.js
+@@ -13,14 +13,16 @@ import { IntlMessageFormat } from 'intl-messageformat'
+ import { msg, isMsg } from './msg.js'
+ import en from './en/index.js'
+ import de from './de/index.js'
++import ja from './ja/index.js'
+ 
+ // language id → { dotted key → ICU message }. Add a language here with its catalogue.
+-export const CATALOGS = { en: flatten(en), de: flatten(de) }
++export const CATALOGS = { en: flatten(en), de: flatten(de), ja: flatten(ja) }
+ // A `preview` language is partly translated: it is never picked from the browser's
+ // languages, only chosen by hand (the console's `lang`), until it covers the app.
+ export const LANGUAGES = [
+   { id: 'en', label: 'English' },
+   { id: 'de', label: 'Deutsch', preview: true },
++  { id: 'ja', label: '日本語' },
+ ]
+ export const FALLBACK = 'en'
+ 

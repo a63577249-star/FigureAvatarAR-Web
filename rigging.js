@@ -1334,6 +1334,8 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const armFreeHeadY=Math.max(modelBounds.min.y+modelExtent.y*0.68,headBoneY-rootSize*0.16);
   const headSegment=segmentData.find(segment=>segment.name==='head');
   const headProtectRadius=Math.max(rootSize*0.12,headSegment?Math.sqrt(headSegment.lengthSq)*0.8:0);
+  const footHorizontalRadius=Math.max(rootSize*0.08,Math.max(modelExtent.x,modelExtent.z)*0.28);
+  const footVerticalAbove=modelExtent.y*0.025,footVerticalBelow=modelExtent.y*0.10;
   const sigma=Math.max(rootSize*0.025,1e-5),maxGap=rootSize*0.02;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
@@ -1373,7 +1375,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     for(let s=0;s<segmentData.length;s++){
       const seg=segmentData[s];if(!seg.isFootInfluence)continue;
       const dx=px-seg.bx,dz=pz-seg.bz,horizontalDistance=Math.hypot(dx,dz);
-      if(py<=seg.by+rootSize*0.04&&py>=seg.by-rootSize*0.18&&horizontalDistance<=rootSize*0.24&&horizontalDistance<footHorizontalDistance){
+      if(py<=seg.by+footVerticalAbove&&py>=seg.by-footVerticalBelow&&horizontalDistance<=footHorizontalRadius&&horizontalDistance<footHorizontalDistance){
         footSegmentIndex=s;footHorizontalDistance=horizontalDistance;
       }
     }

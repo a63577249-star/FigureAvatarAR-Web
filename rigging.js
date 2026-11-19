@@ -578,8 +578,12 @@ autoButton.addEventListener('click',()=>{
 });
 fileInput.addEventListener('change',event=>loadModel(Array.from(event.target.files||[])));
 
-function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
-  const rows=Array.from({length:vertexCount},()=>new Map());
+async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
+  const rows=new Array(vertexCount);
+  for(let v=0;v<vertexCount;v++){
+    rows[v]=new Map();
+    if(v>0&&v%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
+  }
   const index=geometry.index?.array;
   const count=index?index.length:vertexCount;
   const at=i=>index?index[i]:i;
@@ -608,6 +612,10 @@ function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
     add(c,b,stableCotangent(bx,by,bz,cx,cy,cz,ax,ay,az));
     add(c,a,stableCotangent(cx,cy,cz,ax,ay,az,bx,by,bz));
     add(a,c,stableCotangent(cx,cy,cz,ax,ay,az,bx,by,bz));
+    if(i>0&&i%36864===0){
+      setStatus(`メッシュ表面の拡散準備中… ${Math.floor(i/count*100)}%`);
+      await new Promise(resolve=>requestAnimationFrame(resolve));
+    }
   }
   const neighbors=new Array(vertexCount),weights=new Array(vertexCount);
   for(let v=0;v<vertexCount;v++){
@@ -618,6 +626,7 @@ function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
     if(total<=1e-12)normalized.fill(1/ids.length);
     else for(let i=0;i<ids.length;i++)normalized[i]=row.get(ids[i])/total;
     neighbors[v]=ids;weights[v]=normalized;
+    if(v>0&&v%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
   }
   return {neighbors,weights};
 }
@@ -1209,7 +1218,8 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   }
 
   const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
-  const diffusionGraph=lightweightPhoneMode?null:makeSurfaceDiffusionGraph(geometry,rootVertices,count);
+  if(!lightweightPhoneMode)setStatus('メッシュ表面に沿うウェイト拡散を準備しています…');
+  const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
   let next=new Float32Array(dense.length);
   for(let iteration=0;diffusionGraph&&iteration<8;iteration++){
@@ -1277,6 +1287,7 @@ async function generateRigAndWeights(){
   if(placeMode){placeMode=false;placeButton.textContent='位置を置く：OFF';controls.enabled=true;}
   setProtectMode(false);
   setStatus('ボーンとウェイトを生成しています…');
+  await new Promise(resolve=>requestAnimationFrame(resolve));
   try{
     const rigRoot=new THREE.Group();rigRoot.name='GeneratedRig';modelRoot.add(rigRoot);
     if(generatedRig){

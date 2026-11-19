@@ -1314,10 +1314,15 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     if(segment.isDistalLimb)return Math.max(rootSize*0.035,length*0.35);
     return Math.max(rootSize*0.04,length*0.4);
   };
-  const shoulderSegmentApplies=(segment,px)=>{
+  const shoulderSegmentApplies=(segment,px,py,pz)=>{
     if(!/Shoulder$/.test(segment.name))return true;
     const shoulderLateral=Math.abs((segment.ax+segment.bx)*0.5-modelCenter.x);
-    return Math.abs(px-modelCenter.x)>=Math.max(modelExtent.x*0.08,shoulderLateral*0.7);
+    if(Math.abs(px-modelCenter.x)<Math.max(modelExtent.x*0.08,shoulderLateral*0.7))return false;
+    const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
+    const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+    const ox=px-(segment.ax+segment.abx*t),oy=py-(segment.ay+segment.aby*t),oz=pz-(segment.az+segment.abz*t);
+    const reach=Math.max(rootSize*0.07,Math.sqrt(segment.lengthSq)*0.35);
+    return ox*ox+oy*oy+oz*oz<=reach*reach;
   };
   const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
   if(!lightweightPhoneMode)setStatus('独立した袖や服のパーツを確認しています…');
@@ -1338,7 +1343,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     for(let s=0;s<segmentData.length;s++){
       const seg=segmentData[s];
       if(armSurface&&!seg.isArmInfluence)continue;
-      if(!shoulderSegmentApplies(seg,px))continue;
+      if(!shoulderSegmentApplies(seg,px,py,pz))continue;
       const dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
       const t=seg.lengthSq>1e-12?THREE.MathUtils.clamp((dx*seg.abx+dy*seg.aby+dz*seg.abz)/seg.lengthSq,0,1):0;
       const cx=seg.ax+seg.abx*t,cy=seg.ay+seg.aby*t,cz=seg.az+seg.abz*t;
@@ -1362,7 +1367,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     const primarySegment=segmentData[primaryIndex];
     for(const candidate of directSegmentAdj[primaryIndex]){
       const candidateSegment=segmentData[candidate];
-      if(!shoulderSegmentApplies(candidateSegment,px))continue;
+      if(!shoulderSegmentApplies(candidateSegment,px,py,pz))continue;
       const primaryIsArm=primarySegment.isArmLimb||/Shoulder$/.test(primarySegment.name);
       const candidateIsArm=candidateSegment.isArmLimb||/Shoulder$/.test(candidateSegment.name);
       // Keep arm weights on the arm chain. The shoulder is the only narrow

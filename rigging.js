@@ -1335,7 +1335,6 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const headSegment=segmentData.find(segment=>segment.name==='head');
   const headProtectRadius=Math.max(rootSize*0.12,headSegment?Math.sqrt(headSegment.lengthSq)*0.8:0);
   const footHorizontalRadius=Math.max(rootSize*0.08,Math.max(modelExtent.x,modelExtent.z)*0.28);
-  const footVerticalAbove=modelExtent.y*0.025,footVerticalBelow=modelExtent.y*0.10;
   const sigma=Math.max(rootSize*0.025,1e-5),maxGap=rootSize*0.02;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
@@ -1371,16 +1370,20 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     // The simplified rig has no toe bone. Vertices immediately below and near
     // an ankle must therefore follow that ankle instead of falling back to hip
     // or torso weights, which leaves the toes stretched in place.
-    let footSegmentIndex=-1,footHorizontalDistance=Infinity;
+    let footSegmentIndex=-1,footHorizontalDistance=Infinity,footBlendT=1;
     for(let s=0;s<segmentData.length;s++){
       const seg=segmentData[s];if(!seg.isFootInfluence)continue;
-      const dx=px-seg.bx,dz=pz-seg.bz,horizontalDistance=Math.hypot(dx,dz);
-      if(py<=seg.by+footVerticalAbove&&py>=seg.by-footVerticalBelow&&horizontalDistance<=footHorizontalRadius&&horizontalDistance<footHorizontalDistance){
-        footSegmentIndex=s;footHorizontalDistance=horizontalDistance;
+      const dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
+      const rawT=seg.lengthSq>1e-12?(dx*seg.abx+dy*seg.aby+dz*seg.abz)/seg.lengthSq:1;
+      if(rawT<0.90)continue;
+      const closestX=seg.ax+seg.abx*rawT,closestY=seg.ay+seg.aby*rawT,closestZ=seg.az+seg.abz*rawT;
+      const ox=px-closestX,oy=py-closestY,oz=pz-closestZ,radialDistance=Math.hypot(ox,oy,oz);
+      if(radialDistance<=footHorizontalRadius&&radialDistance<footHorizontalDistance){
+        footSegmentIndex=s;footHorizontalDistance=radialDistance;footBlendT=THREE.MathUtils.clamp((rawT-0.90)/0.10,0,1);
       }
     }
     const isFootRegion=footSegmentIndex>=0;
-    if(isFootRegion){footRegionVertexCount++;primaryIndex=footSegmentIndex;primaryT=1;nearestDistance=footHorizontalDistance;}
+    if(isFootRegion){footRegionVertexCount++;primaryIndex=footSegmentIndex;primaryT=footBlendT;nearestDistance=footHorizontalDistance;}
     // Do not let a leg or forearm capture remote clothing/accessories merely
     // because it is the nearest of all bones. If it is outside the segment's
     // local reach, anchor it to the closest torso segment instead.

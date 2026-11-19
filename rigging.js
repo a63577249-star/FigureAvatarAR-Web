@@ -1434,6 +1434,64 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   return {geometry,armSurfaceComponentCount};
 }
 
+function unifyAdjacentMeshSeamWeights(entries,boneCount,rootSize){
+  const tolerance=Math.max(rootSize*1e-4,1e-5),toleranceSq=tolerance*tolerance;
+  const refs=[];
+  for(let entryIndex=0;entryIndex<entries.length;entryIndex++){
+    const entry=entries[entryIndex];if(!entry.generated)continue;
+    for(let vertex=0;vertex<entry.rootPositions.length/3;vertex++)refs.push({entryIndex,vertex});
+  }
+  const parent=new Int32Array(refs.length);for(let i=0;i<parent.length;i++)parent[i]=i;
+  const root=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
+  const join=(a,b)=>{const ra=root(a),rb=root(b);if(ra!==rb)parent[Math.max(ra,rb)]=Math.min(ra,rb);};
+  const cells=new Map(),key=(x,y,z)=>`${x},${y},${z}`;
+  for(let refIndex=0;refIndex<refs.length;refIndex++){
+    const ref=refs[refIndex],positions=entries[ref.entryIndex].rootPositions,offset=ref.vertex*3;
+    const px=positions[offset],py=positions[offset+1],pz=positions[offset+2];
+    const cx=Math.floor(px/tolerance),cy=Math.floor(py/tolerance),cz=Math.floor(pz/tolerance);
+    for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)for(let z=-1;z<=1;z++){
+      const candidates=cells.get(key(cx+x,cy+y,cz+z));if(!candidates)continue;
+      for(const otherIndex of candidates){
+        const other=refs[otherIndex];if(other.entryIndex===ref.entryIndex)continue;
+        const otherPositions=entries[other.entryIndex].rootPositions,otherOffset=other.vertex*3;
+        const dx=px-otherPositions[otherOffset],dy=py-otherPositions[otherOffset+1],dz=pz-otherPositions[otherOffset+2];
+        if(dx*dx+dy*dy+dz*dz<=toleranceSq)join(refIndex,otherIndex);
+      }
+    }
+    const cell=key(cx,cy,cz);if(!cells.has(cell))cells.set(cell,[]);cells.get(cell).push(refIndex);
+  }
+  const groups=new Map();
+  for(let i=0;i<refs.length;i++){const r=root(i);if(!groups.has(r))groups.set(r,[]);groups.get(r).push(refs[i]);}
+  let seamCount=0;
+  for(const group of groups.values()){
+    if(group.length<2)continue;
+    const sums=new Float64Array(boneCount);let rigidBone=-1,rigidStrength=0;
+    for(const ref of group){
+      const entry=entries[ref.entryIndex],index=entry.generated.geometry.getAttribute('skinIndex'),weight=entry.generated.geometry.getAttribute('skinWeight');
+      const assignment=protectedVertices.get(entry)?.get(ref.vertex),assignedBone=assignment?BONE_DEFS.findIndex(bone=>bone.name===assignment.boneName):-1;
+      if(assignment&&assignment.strength>=0.999&&assignedBone>=0&&assignment.strength>rigidStrength){rigidBone=assignedBone;rigidStrength=assignment.strength;}
+      for(let slot=0;slot<4;slot++)sums[index.array[ref.vertex*4+slot]]+=weight.array[ref.vertex*4+slot]/group.length;
+    }
+    let values;
+    if(rigidBone>=0){values=[[rigidBone,1]];}
+    else{
+      values=Array.from(sums, (value,bone)=>[bone,value]).filter(item=>item[1]>1e-7).sort((a,b)=>b[1]-a[1]).slice(0,4);
+      let sum=values.reduce((total,item)=>total+item[1],0);
+      if(sum<=1e-8){values=[[0,1]];sum=1;}
+      for(const item of values)item[1]/=sum;
+    }
+    for(const ref of group){
+      const geometry=entries[ref.entryIndex].generated.geometry,index=geometry.getAttribute('skinIndex'),weight=geometry.getAttribute('skinWeight');
+      for(let slot=0;slot<4;slot++){
+        const item=values[slot]||[0,0];index.array[ref.vertex*4+slot]=item[0];weight.array[ref.vertex*4+slot]=item[1];
+      }
+      index.needsUpdate=true;weight.needsUpdate=true;
+    }
+    seamCount++;
+  }
+  return seamCount;
+}
+
 async function generateRigAndWeights(){
   if(!modelRoot||modelEntries.length===0){setStatus('先にモデルを読み込んでください。');return;}
   const missing=BONE_DEFS.filter(b=>!b.position);
@@ -1480,11 +1538,12 @@ async function generateRigAndWeights(){
       if(marker)marker.visible=true;
     }
     modelRoot.updateMatrixWorld(true);
+    const unifiedSeams=unifyAdjacentMeshSeamWeights(modelEntries,BONE_DEFS.length,rootSize);
     exportButton.disabled=false;
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
     const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
     const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個はメモリ保護のため表面平滑化を省きました。`:'';
-    setStatus(`リギングを生成しました。独立した腕・袖パーツ${armSurfaceComponentCount}個を腕ボーン側と判定し、メッシュ表面に沿ってウェイトを伝えました。部位指定した${assignedCount.toLocaleString()}頂点は指定ボーンを優先しました。${phoneNote}Blenderと同じ計算ではないため、関節の変形を確認してGLBを保存してください。`);
+    setStatus(`リギングを生成しました。独立した腕・袖パーツ${armSurfaceComponentCount}個を腕ボーン側と判定し、隣接メッシュの継ぎ目${unifiedSeams}か所のウェイトを揃えました。部位指定した${assignedCount.toLocaleString()}頂点は指定ボーンを優先しました。${phoneNote}大きな姿勢変化でも継ぎ目を確認してからGLBを保存してください。`);
   }catch(error){
     console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
   }finally{generateButton.disabled=false;}

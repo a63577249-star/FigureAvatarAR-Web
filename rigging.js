@@ -1194,10 +1194,24 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     const isDistalLimb=namedDistalLimb
       ||(!isCore&&(midpointY<modelBounds.min.y+modelExtent.y*0.58
         ||Math.abs(midpointX-modelCenter.x)>Math.max(modelExtent.x*0.18,rootSize*0.04)));
-    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore};
+    const isArmLimb=/^(Left|Right)(UpperArm|Elbow|Wrist)$/.test(childName)
+      ||(!namedDistalLimb&&isDistalLimb&&midpointY>=modelBounds.min.y+modelExtent.y*0.48
+        &&Math.abs(midpointX-modelCenter.x)>Math.max(modelExtent.x*0.18,rootSize*0.04));
+    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb};
   }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
-  const segmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
+  const directSegmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
+  const segmentAdj=directSegmentAdj.map((neighbors,index)=>{
+    const expanded=new Set(neighbors);
+    for(const neighbor of neighbors)for(const next of directSegmentAdj[neighbor])if(next!==index)expanded.add(next);
+    return Array.from(expanded);
+  });
+  const influenceReach=segment=>{
+    const length=Math.sqrt(segment.lengthSq);
+    if(segment.isArmLimb)return Math.max(rootSize*0.14,length*0.65);
+    if(segment.isDistalLimb)return Math.max(rootSize*0.035,length*0.35);
+    return Math.max(rootSize*0.04,length*0.4);
+  };
   const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
@@ -1220,7 +1234,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     // because it is the nearest of all bones. If it is outside the segment's
     // local reach, anchor it to the closest torso segment instead.
     if(segmentData[primaryIndex].isDistalLimb){
-      const limbReach=Math.max(rootSize*0.035,Math.sqrt(segmentData[primaryIndex].lengthSq)*0.35);
+      const limbReach=influenceReach(segmentData[primaryIndex]);
       if(nearestDistance>limbReach&&coreIndex>=0){primaryIndex=coreIndex;primaryT=coreT;nearestDistance=coreDistance;}
     }
     const base=segmentData[primaryIndex],offset=v*boneCount;
@@ -1230,7 +1244,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     let secondaryIndex=-1,bestGap=Infinity;
     for(const candidate of segmentAdj[primaryIndex]){
       const candidateSegment=segmentData[candidate];
-      const candidateReach=Math.max(rootSize*0.035,Math.sqrt(candidateSegment.lengthSq)*0.35);
+      const candidateReach=influenceReach(candidateSegment);
       if(candidateSegment.isDistalLimb&&hitDistances[candidate]>candidateReach)continue;
       const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}
     }

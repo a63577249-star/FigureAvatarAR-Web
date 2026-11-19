@@ -151,7 +151,6 @@ renderBoneList();
 function setRigEditingEnabled(enabled) {
   placeButton.disabled = !enabled;
   autoButton.disabled = !enabled;
-  generateButton.disabled = !enabled;
   regionToggle.disabled = !enabled;
   regionDetectButton.disabled = !enabled;
   for(const input of regionAxisInputs)input.disabled=!enabled;
@@ -1269,9 +1268,11 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
 }
 
 async function generateRigAndWeights(){
-  if(!modelRoot||modelEntries.length===0)return;
+  if(!modelRoot||modelEntries.length===0){setStatus('先にモデルを読み込んでください。');return;}
   const missing=BONE_DEFS.filter(b=>!b.position);
   if(missing.length){activeBoneName=missing[0].name;renderBoneList();setStatus(`未配置の関節があります。${missing[0].label}から配置してください。`);return;}
+  if(generateButton.disabled)return;
+  generateButton.disabled=true;
   if(placeMode){placeMode=false;placeButton.textContent='位置を置く：OFF';controls.enabled=true;}
   setProtectMode(false);
   setStatus('ボーンとウェイトを生成しています…');
@@ -1316,7 +1317,7 @@ async function generateRigAndWeights(){
     setStatus(`リギングを生成しました。メッシュ表面に沿うBone Heat風の拡散でウェイトをなじませ、部位指定した${assignedCount.toLocaleString()}頂点は指定ボーンを優先しました。${phoneNote}Blenderと同じ計算ではないため、関節の変形を確認してGLBを保存してください。`);
   }catch(error){
     console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
-  }
+  }finally{generateButton.disabled=false;}
 }
 generateButton.addEventListener('click',generateRigAndWeights);
 

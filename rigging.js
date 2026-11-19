@@ -1329,6 +1329,8 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,rootVertices,modelBounds,rootSize):null;
   const armSurfaceComponentCount=armSurfaceComponents?armSurfaceComponents.reduce((sum,flag)=>sum+flag,0):0;
+  const headBoneY=BONE_DEFS.find(bone=>bone.name==='head')?.position?.y??modelBounds.max.y;
+  const armFreeHeadY=Math.max(modelBounds.min.y+modelExtent.y*0.76,headBoneY-rootSize*0.10);
   const sigma=Math.max(rootSize*0.025,1e-5),maxGap=rootSize*0.02;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
@@ -1337,12 +1339,14 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     if(v>0&&v%4096===0){setStatus(`ウェイトを計算しています… ${Math.floor(v/count*100)}%`);await new Promise(resolve=>requestAnimationFrame(resolve));}
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2];
     const component=diffusionGraph?.componentIds?.[v];
-    const armSurface=component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
+    const isHeadRegion=py>=armFreeHeadY;
+    const armSurface=!isHeadRegion&&component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
     let primaryIndex=-1,primaryT=0,nearestDistance=Infinity;
     let coreIndex=-1,coreT=0,coreDistance=Infinity;
     for(let s=0;s<segmentData.length;s++){
       const seg=segmentData[s];
       if(armSurface&&!seg.isArmInfluence)continue;
+      if(isHeadRegion&&seg.isArmInfluence)continue;
       if(!shoulderSegmentApplies(seg,px,py,pz))continue;
       const dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
       const t=seg.lengthSq>1e-12?THREE.MathUtils.clamp((dx*seg.abx+dy*seg.aby+dz*seg.abz)/seg.lengthSq,0,1):0;
@@ -1367,6 +1371,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     const primarySegment=segmentData[primaryIndex];
     for(const candidate of directSegmentAdj[primaryIndex]){
       const candidateSegment=segmentData[candidate];
+      if(isHeadRegion&&candidateSegment.isArmInfluence)continue;
       if(!shoulderSegmentApplies(candidateSegment,px,py,pz))continue;
       const primaryIsArm=primarySegment.isArmLimb||/Shoulder$/.test(primarySegment.name);
       const candidateIsArm=candidateSegment.isArmLimb||/Shoulder$/.test(candidateSegment.name);

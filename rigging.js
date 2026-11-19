@@ -628,7 +628,45 @@ async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
     neighbors[v]=ids;weights[v]=normalized;
     if(v>0&&v%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
   }
-  return {neighbors,weights};
+  const componentIds=new Int32Array(vertexCount);componentIds.fill(-1);
+  const componentCenters=[],queue=new Int32Array(vertexCount);
+  let componentCount=0,visited=0;
+  for(let start=0;start<vertexCount;start++){
+    if(componentIds[start]>=0)continue;
+    let head=0,tail=0,sx=0,sy=0,sz=0;
+    queue[tail++]=start;componentIds[start]=componentCount;
+    while(head<tail){
+      const vertex=queue[head++];sx+=positions[vertex*3];sy+=positions[vertex*3+1];sz+=positions[vertex*3+2];
+      for(const neighbor of neighbors[vertex])if(componentIds[neighbor]<0){componentIds[neighbor]=componentCount;queue[tail++]=neighbor;}
+      if(++visited%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
+    }
+    componentCenters.push(new THREE.Vector3(sx/tail,sy/tail,sz/tail));componentCount++;
+  }
+  return {neighbors,weights,componentIds,componentCenters};
+}
+
+function classifyArmSurfaceComponents(graph,segments,bounds,rootSize){
+  const flags=new Uint8Array(graph.componentCenters.length);
+  if(!graph.componentCenters.length)return flags;
+  const center=bounds.getCenter(new THREE.Vector3()),extent=bounds.getSize(new THREE.Vector3());
+  const armSegments=segments.filter(segment=>segment.isArmInfluence);
+  const coreSegments=segments.filter(segment=>segment.isCore);
+  if(!armSegments.length)return flags;
+  const distanceToSegment=(point,segment)=>{
+    const dx=point.x-segment.ax,dy=point.y-segment.ay,dz=point.z-segment.az;
+    const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+    return point.distanceTo(new THREE.Vector3(segment.ax+segment.abx*t,segment.ay+segment.aby*t,segment.az+segment.abz*t));
+  };
+  for(let component=0;component<graph.componentCenters.length;component++){
+    const point=graph.componentCenters[component],lateral=Math.abs(point.x-center.x);
+    const height=(point.y-bounds.min.y)/Math.max(extent.y,1e-6);
+    if(lateral<Math.max(extent.x*0.075,rootSize*0.025)||height<0.36||height>0.88)continue;
+    let armDistance=Infinity,coreDistance=Infinity;
+    for(const segment of armSegments)armDistance=Math.min(armDistance,distanceToSegment(point,segment));
+    for(const segment of coreSegments)coreDistance=Math.min(coreDistance,distanceToSegment(point,segment));
+    if(armDistance<=rootSize*0.2&&armDistance<=coreDistance+rootSize*0.035)flags[component]=1;
+  }
+  return flags;
 }
 
 function coincidentVertexGroups(positions, scale) {
@@ -1256,7 +1294,8 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     const isArmLimb=/^(Left|Right)(UpperArm|Elbow|Wrist)$/.test(childName)
       ||(!namedDistalLimb&&isDistalLimb&&midpointY>=modelBounds.min.y+modelExtent.y*0.48
         &&Math.abs(midpointX-modelCenter.x)>Math.max(modelExtent.x*0.18,rootSize*0.04));
-    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb};
+    const isArmInfluence=isArmLimb||/^(Left|Right)Shoulder$/.test(childName);
+    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb,isArmInfluence};
   }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
   const directSegmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
@@ -1271,6 +1310,11 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     if(segment.isDistalLimb)return Math.max(rootSize*0.035,length*0.35);
     return Math.max(rootSize*0.04,length*0.4);
   };
+  const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
+  if(!lightweightPhoneMode)setStatus('独立した袖や服のパーツを確認しています…');
+  const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
+  const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,modelBounds,rootSize):null;
+  const armSurfaceComponentCount=armSurfaceComponents?armSurfaceComponents.reduce((sum,flag)=>sum+flag,0):0;
   const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
@@ -1278,21 +1322,25 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   for(let v=0;v<count;v++){
     if(v>0&&v%4096===0){setStatus(`ウェイトを計算しています… ${Math.floor(v/count*100)}%`);await new Promise(resolve=>requestAnimationFrame(resolve));}
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2];
+    const component=diffusionGraph?.componentIds?.[v];
+    const armSurface=component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
     let primaryIndex=-1,primaryT=0,nearestDistance=Infinity;
     let coreIndex=-1,coreT=0,coreDistance=Infinity;
     for(let s=0;s<segmentData.length;s++){
-      const seg=segmentData[s],dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
+      const seg=segmentData[s];
+      if(armSurface&&!seg.isArmInfluence)continue;
+      const dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
       const t=seg.lengthSq>1e-12?THREE.MathUtils.clamp((dx*seg.abx+dy*seg.aby+dz*seg.abz)/seg.lengthSq,0,1):0;
       const cx=seg.ax+seg.abx*t,cy=seg.ay+seg.aby*t,cz=seg.az+seg.abz*t;
       const ox=px-cx,oy=py-cy,oz=pz-cz,distance=Math.sqrt(ox*ox+oy*oy+oz*oz);
       hitDistances[s]=distance;hitParameters[s]=t;
       if(distance<nearestDistance){nearestDistance=distance;primaryIndex=s;primaryT=t;}
-      if(seg.isCore&&distance<coreDistance){coreDistance=distance;coreIndex=s;coreT=t;}
+      if(!armSurface&&seg.isCore&&distance<coreDistance){coreDistance=distance;coreIndex=s;coreT=t;}
     }
     // Do not let a leg or forearm capture remote clothing/accessories merely
     // because it is the nearest of all bones. If it is outside the segment's
     // local reach, anchor it to the closest torso segment instead.
-    if(segmentData[primaryIndex].isDistalLimb){
+    if(!armSurface&&segmentData[primaryIndex].isDistalLimb){
       const limbReach=influenceReach(segmentData[primaryIndex]);
       if(nearestDistance>limbReach&&coreIndex>=0){primaryIndex=coreIndex;primaryT=coreT;nearestDistance=coreDistance;}
     }
@@ -1303,6 +1351,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     let secondaryIndex=-1,bestGap=Infinity;
     for(const candidate of segmentAdj[primaryIndex]){
       const candidateSegment=segmentData[candidate];
+      if(armSurface&&!candidateSegment.isArmInfluence)continue;
       const candidateReach=influenceReach(candidateSegment);
       if(candidateSegment.isDistalLimb&&hitDistances[candidate]>candidateReach)continue;
       const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}
@@ -1315,9 +1364,6 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     normalizeWeights(dense,offset,boneCount);
   }
 
-  const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
-  if(!lightweightPhoneMode)setStatus('メッシュ表面に沿うウェイト拡散を準備しています…');
-  const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
   await extendArmWeightsOverSurface(dense,allowedInfluences,diffusionGraph,groups,segmentData,rootVertices,rootSize,count,boneCount);
   let next=new Float32Array(dense.length);
@@ -1374,7 +1420,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(skinIndex,4));
   geometry.setAttribute('skinWeight',new THREE.Float32BufferAttribute(skinWeight,4));
   geometry.computeBoundingBox();geometry.computeBoundingSphere();
-  return geometry;
+  return {geometry,armSurfaceComponentCount};
 }
 
 async function generateRigAndWeights(){
@@ -1406,8 +1452,10 @@ async function generateRigAndWeights(){
     const bones=BONE_DEFS.map(def=>def.bone);
     const skeleton=new THREE.Skeleton(bones);skeleton.calculateInverses();
     const bounds=modelLocalBounds(),rootSize=bounds.getSize(new THREE.Vector3()).length();
+    let armSurfaceComponentCount=0;
     for(const entry of modelEntries){
-      const old=entry.mesh,parent=old.parent,geometry=await generateMeshWeights(entry,bones,rootSize);
+      const old=entry.mesh,parent=old.parent,result=await generateMeshWeights(entry,bones,rootSize),geometry=result.geometry;
+      armSurfaceComponentCount+=result.armSurfaceComponentCount;
       const skinned=new THREE.SkinnedMesh(geometry,entry.material);
       skinned.name=old.name;skinned.castShadow=old.castShadow;skinned.receiveShadow=old.receiveShadow;
       skinned.frustumCulled=false;skinned.matrix.copy(old.matrix);skinned.matrixAutoUpdate=old.matrixAutoUpdate;
@@ -1425,7 +1473,7 @@ async function generateRigAndWeights(){
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
     const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
     const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個はメモリ保護のため表面平滑化を省きました。`:'';
-    setStatus(`リギングを生成しました。メッシュ表面に沿うBone Heat風の拡散でウェイトをなじませ、部位指定した${assignedCount.toLocaleString()}頂点は指定ボーンを優先しました。${phoneNote}Blenderと同じ計算ではないため、関節の変形を確認してGLBを保存してください。`);
+    setStatus(`リギングを生成しました。独立した腕・袖パーツ${armSurfaceComponentCount}個を腕ボーン側と判定し、メッシュ表面に沿ってウェイトを伝えました。部位指定した${assignedCount.toLocaleString()}頂点は指定ボーンを優先しました。${phoneNote}Blenderと同じ計算ではないため、関節の変形を確認してGLBを保存してください。`);
   }catch(error){
     console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
   }finally{generateButton.disabled=false;}

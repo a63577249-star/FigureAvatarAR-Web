@@ -14,9 +14,9 @@
   <main>
     <section class="panel">
       <h2>写真から3Dメッシュを生成</h2>
-      <p>生成処理は利用者のブラウザー内で行う方式です。写真をこのサイトのサーバーへ送らず、生成用の有料GPUサーバーも使いません。端末の性能・対応ブラウザーによって処理時間や結果が変わります。</p>
-      <a class="button" href="https://websfm.app/" target="_blank" rel="noopener noreferrer">写真生成ツールを開く（WebSfM）</a>
-      <p class="note">WebSfMは別サイトで動作するオープンソースのベータ版です。フィギュアの細部まで再現できるかは、写真と端末によって異なります。画像からの再構成は、髪の細い束・透明部品・光沢面・隠れた部分を完全には復元できません。</p>
+      <p>生成画面をこのサイトに組み込みました。写真の位置合わせ、点群、メッシュ化、テクスチャ作成は端末のブラウザー内で処理し、写真をサーバーへ送信しません。有料GPUサーバーも使いません。</p>
+      <a class="button" href="./photogrammetry/">このサイトで写真からモデルを生成</a>
+      <p class="note">写真の復元エンジンには、MITライセンスのWebSfMをこのサイト内に同梱しています。配布ファイル一式は約115MBで、初回はアプリと必要な処理部品を読み込みます。生成処理はPCのChromeまたはEdgeを推奨します。フィギュアでの品質は撮影と形状に左右され、光沢面・透明部品・隠れた面・細い髪は復元が難しい場合があります。</p>
     </section>
     <section class="panel">
       <h2>撮影の目安</h2>
@@ -31,7 +31,7 @@
     <section class="panel">
       <h2>生成したモデルを動かしてAR表示</h2>
       <ol class="steps">
-        <li>WebSfMで写真を読み込み、位置合わせとメッシュ生成を行います。</li>
+        <li>上のボタンを開き、写真を読み込んで位置合わせとメッシュ生成を行います。</li>
         <li>テクスチャ付きメッシュを <strong>glTF</strong> 形式で書き出します。関連する .bin と画像ファイルもまとめて保存してください。</li>
         <li>このページに戻り、<a href="./rigging.html">ボーン設定ページ</a>で .gltf と関連ファイルを同時に選択します。関節を配置し、ウェイトを生成してGLBを書き出します。</li>
         <li><a href="./pose-ar.html">モデル切替・関節操作・AR</a>ページで書き出したGLBを読み込み、動作を調整してAR表示します。</li>
@@ -40,7 +40,7 @@
     </section>
     <section class="panel warning">
       <strong>端末について</strong>
-      <p>WebSfMはChromium系ブラウザー（Chrome / Edge）を推奨しています。WebGPU対応の有無で処理速度が変わり、Safariで実写真を処理する動作は未確認です。まずPCのChromeまたはEdgeで少ない枚数から試してください。処理が止まる、ページが再読み込みされる場合は画像枚数や解像度を下げてください。</p>
+      <p>生成エンジンはWebSfM（MIT License）をFigureAvatarAR内に同梱しています。エンジンの著作権表示と依存ライセンスは<a href="./photogrammetry/THIRD_PARTY_NOTICES.txt">こちら</a>で確認できます。GitHub Pagesの制約により一部のマルチスレッド高速化ヘッダーは使えないため、処理速度は専用ホスティングより低下する場合があります。まずPCのChromeまたはEdgeで少ない枚数から試してください。</p>
     </section>
   </main>
 </body>

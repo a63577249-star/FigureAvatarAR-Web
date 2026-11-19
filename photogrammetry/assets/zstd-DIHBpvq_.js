@@ -1,0 +1,1 @@
+import{Z as r}from"./zstddec-stream.modern--lB-NqY4.js";import{B as o}from"./basedecoder-Dx75wktK.js";const d=new r;class a extends o{decodeBlock(e){return d.decode(new Uint8Array(e)).buffer}}export{a as default,d as zstd};

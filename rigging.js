@@ -652,9 +652,7 @@ function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
   const armSegments=segments.filter(segment=>segment.isArmInfluence);
   const coreSegments=segments.filter(segment=>segment.isCore);
   if(!armSegments.length)return flags;
-  const minArmDistance=new Float32Array(flags.length),minCoreDistance=new Float32Array(flags.length);
-  minArmDistance.fill(Infinity);minCoreDistance.fill(Infinity);
-  const maxLateral=new Float32Array(flags.length),minY=new Float32Array(flags.length),maxY=new Float32Array(flags.length);
+  const minY=new Float32Array(flags.length),maxY=new Float32Array(flags.length);
   minY.fill(Infinity);maxY.fill(-Infinity);
   const distanceToSegment=(px,py,pz,segment)=>{
     const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
@@ -663,16 +661,17 @@ function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
   };
   for(let vertex=0;vertex<graph.componentIds.length;vertex++){
     const component=graph.componentIds[vertex],px=positions[vertex*3],py=positions[vertex*3+1],pz=positions[vertex*3+2];
-    maxLateral[component]=Math.max(maxLateral[component],Math.abs(px-center.x));
     minY[component]=Math.min(minY[component],py);maxY[component]=Math.max(maxY[component],py);
-    for(const segment of armSegments)minArmDistance[component]=Math.min(minArmDistance[component],distanceToSegment(px,py,pz,segment));
-    for(const segment of coreSegments)minCoreDistance[component]=Math.min(minCoreDistance[component],distanceToSegment(px,py,pz,segment));
   }
   for(let component=0;component<graph.componentCenters.length;component++){
-    const lateral=maxLateral[component];
+    const componentCenter=graph.componentCenters[component];
+    const lateral=Math.abs(componentCenter.x-center.x);
     const verticalOverlap=maxY[component]>=bounds.min.y+extent.y*0.36&&minY[component]<=bounds.min.y+extent.y*0.9;
     if(lateral<Math.max(extent.x*0.12,rootSize*0.035)||!verticalOverlap)continue;
-    if(minArmDistance[component]<=rootSize*0.16&&minArmDistance[component]<=minCoreDistance[component]+rootSize*0.08)flags[component]=1;
+    let centerArmDistance=Infinity,centerCoreDistance=Infinity;
+    for(const segment of armSegments)centerArmDistance=Math.min(centerArmDistance,distanceToSegment(componentCenter.x,componentCenter.y,componentCenter.z,segment));
+    for(const segment of coreSegments)centerCoreDistance=Math.min(centerCoreDistance,distanceToSegment(componentCenter.x,componentCenter.y,componentCenter.z,segment));
+    if(centerArmDistance<=rootSize*0.18&&centerArmDistance<=centerCoreDistance+rootSize*0.04)flags[component]=1;
   }
   return flags;
 }
@@ -1229,7 +1228,9 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   if(!armBones.size)return;
   const groupByVertex=new Array(count);
   for(const group of groups)for(const vertex of group)groupByVertex[vertex]=group;
-  const maxDistance=rootSize*0.32,sigma=Math.max(rootSize*0.18,1e-5),spreadScale=0.88;
+  // Keep the surface extension local to the joint. Long geodesic spreading
+  // can carry arm weights across a connected torso or skirt and pull seams apart.
+  const maxDistance=rootSize*0.10,sigma=Math.max(rootSize*0.07,1e-5),spreadScale=0.62;
   let processedBones=0;
   for(const boneIndex of armBones){
     let seedStrength=0;

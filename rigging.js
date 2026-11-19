@@ -1304,27 +1304,27 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       ||(!namedDistalLimb&&isDistalLimb&&midpointY>=modelBounds.min.y+modelExtent.y*0.48
         &&Math.abs(midpointX-modelCenter.x)>Math.max(modelExtent.x*0.18,rootSize*0.04));
     const isArmInfluence=isArmLimb||/^(Left|Right)Shoulder$/.test(childName);
-    return {a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb,isArmInfluence};
+    return {name:childName,a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb,isArmInfluence};
   }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
   const directSegmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
-  const segmentAdj=directSegmentAdj.map((neighbors,index)=>{
-    const expanded=new Set(neighbors);
-    for(const neighbor of neighbors)for(const next of directSegmentAdj[neighbor])if(next!==index)expanded.add(next);
-    return Array.from(expanded);
-  });
   const influenceReach=segment=>{
     const length=Math.sqrt(segment.lengthSq);
     if(segment.isArmLimb)return Math.max(rootSize*0.14,length*0.65);
     if(segment.isDistalLimb)return Math.max(rootSize*0.035,length*0.35);
     return Math.max(rootSize*0.04,length*0.4);
   };
+  const shoulderSegmentApplies=(segment,px)=>{
+    if(!/Shoulder$/.test(segment.name))return true;
+    const shoulderLateral=Math.abs((segment.ax+segment.bx)*0.5-modelCenter.x);
+    return Math.abs(px-modelCenter.x)>=Math.max(modelExtent.x*0.08,shoulderLateral*0.7);
+  };
   const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
   if(!lightweightPhoneMode)setStatus('独立した袖や服のパーツを確認しています…');
   const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,rootVertices,modelBounds,rootSize):null;
   const armSurfaceComponentCount=armSurfaceComponents?armSurfaceComponents.reduce((sum,flag)=>sum+flag,0):0;
-  const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
+  const sigma=Math.max(rootSize*0.035,1e-5),maxGap=rootSize*0.045;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
   const hitDistances=new Float32Array(segmentData.length),hitParameters=new Float32Array(segmentData.length);
@@ -1338,6 +1338,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     for(let s=0;s<segmentData.length;s++){
       const seg=segmentData[s];
       if(armSurface&&!seg.isArmInfluence)continue;
+      if(!shoulderSegmentApplies(seg,px))continue;
       const dx=px-seg.ax,dy=py-seg.ay,dz=pz-seg.az;
       const t=seg.lengthSq>1e-12?THREE.MathUtils.clamp((dx*seg.abx+dy*seg.aby+dz*seg.abz)/seg.lengthSq,0,1):0;
       const cx=seg.ax+seg.abx*t,cy=seg.ay+seg.aby*t,cz=seg.az+seg.abz*t;
@@ -1358,14 +1359,22 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     allowedInfluences[offset+base.a]=1;allowedInfluences[offset+base.b]=1;
     fallbackBones[v]=primaryT<0.5?base.a:base.b;
     let secondaryIndex=-1,bestGap=Infinity;
-    for(const candidate of segmentAdj[primaryIndex]){
+    const primarySegment=segmentData[primaryIndex];
+    for(const candidate of directSegmentAdj[primaryIndex]){
       const candidateSegment=segmentData[candidate];
-      if(armSurface&&!candidateSegment.isArmInfluence)continue;
+      if(!shoulderSegmentApplies(candidateSegment,px))continue;
+      const primaryIsArm=primarySegment.isArmLimb||/Shoulder$/.test(primarySegment.name);
+      const candidateIsArm=candidateSegment.isArmLimb||/Shoulder$/.test(candidateSegment.name);
+      // Keep arm weights on the arm chain. The shoulder is the only narrow
+      // bridge allowed between torso and arm; two-hop neighbors caused sleeve,
+      // chest and back vertices to inherit arm motion.
+      if(primaryIsArm&&!candidateIsArm)continue;
+      if(!primaryIsArm&&candidateIsArm&&!(/Shoulder$/.test(candidateSegment.name)&&['chest','neck'].includes(primarySegment.name)))continue;
       const candidateReach=influenceReach(candidateSegment);
       if(candidateSegment.isDistalLimb&&hitDistances[candidate]>candidateReach)continue;
       const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}
     }
-    if(secondaryIndex>=0&&bestGap<=maxGap){
+    if(secondaryIndex>=0&&bestGap<=maxGap&&hitDistances[secondaryIndex]<=nearestDistance*1.35+rootSize*0.01){
       const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex],amount=Math.exp(-(bestGap*bestGap)/(2*sigma*sigma));
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;

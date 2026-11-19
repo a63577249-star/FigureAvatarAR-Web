@@ -1338,6 +1338,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
   const hitDistances=new Float32Array(segmentData.length),hitParameters=new Float32Array(segmentData.length);
+  let footRegionVertexCount=0;
   for(let v=0;v<count;v++){
     if(v>0&&v%4096===0){setStatus(`ウェイトを計算しています… ${Math.floor(v/count*100)}%`);await new Promise(resolve=>requestAnimationFrame(resolve));}
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2];
@@ -1372,12 +1373,12 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     for(let s=0;s<segmentData.length;s++){
       const seg=segmentData[s];if(!seg.isFootInfluence)continue;
       const dx=px-seg.bx,dz=pz-seg.bz,horizontalDistance=Math.hypot(dx,dz);
-      if(py<=seg.by+rootSize*0.025&&py>=seg.by-rootSize*0.14&&horizontalDistance<=rootSize*0.17&&horizontalDistance<footHorizontalDistance){
+      if(py<=seg.by+rootSize*0.04&&py>=seg.by-rootSize*0.18&&horizontalDistance<=rootSize*0.24&&horizontalDistance<footHorizontalDistance){
         footSegmentIndex=s;footHorizontalDistance=horizontalDistance;
       }
     }
     const isFootRegion=footSegmentIndex>=0;
-    if(isFootRegion){primaryIndex=footSegmentIndex;primaryT=1;nearestDistance=footHorizontalDistance;}
+    if(isFootRegion){footRegionVertexCount++;primaryIndex=footSegmentIndex;primaryT=1;nearestDistance=footHorizontalDistance;}
     // Do not let a leg or forearm capture remote clothing/accessories merely
     // because it is the nearest of all bones. If it is outside the segment's
     // local reach, anchor it to the closest torso segment instead.
@@ -1475,7 +1476,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   geometry.setAttribute('skinIndex',new THREE.Uint16BufferAttribute(skinIndex,4));
   geometry.setAttribute('skinWeight',new THREE.Float32BufferAttribute(skinWeight,4));
   geometry.computeBoundingBox();geometry.computeBoundingSphere();
-  return {geometry,armSurfaceComponentCount};
+  return {geometry,armSurfaceComponentCount,footRegionVertexCount};
 }
 
 function unifyAdjacentMeshSeamWeights(entries,boneCount,rootSize){
@@ -1565,10 +1566,11 @@ async function generateRigAndWeights(){
     const bones=BONE_DEFS.map(def=>def.bone);
     const skeleton=new THREE.Skeleton(bones);skeleton.calculateInverses();
     const bounds=modelLocalBounds(),rootSize=bounds.getSize(new THREE.Vector3()).length();
-    let armSurfaceComponentCount=0;
+    let armSurfaceComponentCount=0,footRegionVertexCount=0;
     for(const entry of modelEntries){
       const old=entry.mesh,parent=old.parent,result=await generateMeshWeights(entry,bones,rootSize),geometry=result.geometry;
       armSurfaceComponentCount+=result.armSurfaceComponentCount;
+      footRegionVertexCount+=result.footRegionVertexCount;
       const skinned=new THREE.SkinnedMesh(geometry,entry.material);
       skinned.name=old.name;skinned.castShadow=old.castShadow;skinned.receiveShadow=old.receiveShadow;
       skinned.frustumCulled=false;skinned.matrix.copy(old.matrix);skinned.matrixAutoUpdate=old.matrixAutoUpdate;
@@ -1587,7 +1589,7 @@ async function generateRigAndWeights(){
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
     const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
     const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個はメモリ保護のため表面平滑化を省きました。`:'';
-    setStatus(`リギングを生成しました。独立した腕・袖パーツ${armSurfaceComponentCount}個を腕ボーン側と判定し、隣接メッシュの継ぎ目${unifiedSeams}か所のウェイトを揃えました。部位指定した${assignedCount.toLocaleString()}頂点は指定ボーンを優先しました。${phoneNote}大きな姿勢変化でも継ぎ目を確認してからGLBを保存してください。`);
+    setStatus(`リギングを生成しました。腕・袖パーツ${armSurfaceComponentCount}個を判定し、足先${footRegionVertexCount.toLocaleString()}頂点を足首ボーンへ割り当てました。隣接メッシュの継ぎ目${unifiedSeams}か所のウェイトを揃え、部位指定した${assignedCount.toLocaleString()}頂点を優先しました。${phoneNote}足首を動かして確認してからGLBを保存してください。`);
   }catch(error){
     console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
   }finally{generateButton.disabled=false;}

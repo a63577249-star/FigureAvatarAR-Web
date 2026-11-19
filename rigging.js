@@ -26,7 +26,9 @@ const placeButton = document.querySelector('#place-toggle');
 const autoButton = document.querySelector('#auto-place');
 const generateButton = document.querySelector('#generate');
 const exportButton = document.querySelector('#export');
-const aiRigButton = document.querySelector('#ai-auto-rig');
+const aiDesktopRigButton = document.querySelector('#ai-auto-rig-desktop');
+const aiMobileRigButton = document.querySelector('#ai-auto-rig-mobile');
+const aiRigButtons = [aiDesktopRigButton,aiMobileRigButton];
 const IS_MOBILE_DEVICE=/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
   ||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 const viewHelp = document.querySelector('#view-help');
@@ -42,8 +44,6 @@ const regionToggle = document.querySelector('#region-toggle');
 const regionModeSelect = document.querySelector('#region-mode');
 const regionDetectButton = document.querySelector('#region-detect');
 const regionAxisInputs = Array.from(document.querySelectorAll('[data-region-axis]'));
-
-if(IS_MOBILE_DEVICE)aiRigButton.textContent='軽量AIで関節を配置（スマホ）';
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#121a27');
@@ -1079,11 +1079,11 @@ async function estimateMobileTemplateRig(){
   return BONE_DEFS.length;
 }
 
-async function runAiAutoRig(){
+async function runAiAutoRig(mode){
   if(!modelRoot){setStatus('先にボーンのないGLB、glTF、OBJモデルを読み込んでください。');return;}
-  aiRigButton.disabled=true;
+  aiRigButtons.forEach(button=>button.disabled=true);
   try{
-    if(IS_MOBILE_DEVICE){
+    if(mode==='mobile'){
       let joints=0;
       try{joints=await estimateMobileTemplateRig();}
       catch(error){
@@ -1096,6 +1096,7 @@ async function runAiAutoRig(){
       setStatus(`スマホ向け軽量AIが${joints}関節を推定しました。画像からの推定なので、関節位置を確認・修正してウェイトを生成してください。`);
       return;
     }
+    if(IS_MOBILE_DEVICE) setStatus('PC向けUniRigをスマートフォンで実行中です。大きなモデルを取得するため、ページが再読み込みされる可能性があります。');
     const prediction=await predictAiSkeleton();
     const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest);
     if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');
@@ -1109,9 +1110,10 @@ async function runAiAutoRig(){
     const detail=error.message||String(error);
     const manualNote=detail.includes('手動配置')||detail.includes('ウェイト生成')?'':' 標準19関節の手動配置とウェイト生成は続けて利用できます。';
     setStatus(`AI自動推定に失敗しました: ${detail}${manualNote}`);
-  }finally{aiRigButton.disabled=false;}
+  }finally{aiRigButtons.forEach(button=>button.disabled=false);}
 }
-aiRigButton.addEventListener('click',runAiAutoRig);
+aiDesktopRigButton.addEventListener('click',()=>runAiAutoRig('desktop'));
+aiMobileRigButton.addEventListener('click',()=>runAiAutoRig('mobile'));
 
 function normalizeWeights(values,offset,boneCount){
   let sum=0;for(let b=0;b<boneCount;b++)sum+=values[offset+b];

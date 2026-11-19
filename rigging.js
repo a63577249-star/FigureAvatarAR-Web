@@ -671,7 +671,7 @@ function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
     let centerArmDistance=Infinity,centerCoreDistance=Infinity;
     for(const segment of armSegments)centerArmDistance=Math.min(centerArmDistance,distanceToSegment(componentCenter.x,componentCenter.y,componentCenter.z,segment));
     for(const segment of coreSegments)centerCoreDistance=Math.min(centerCoreDistance,distanceToSegment(componentCenter.x,componentCenter.y,componentCenter.z,segment));
-    if(centerArmDistance<=rootSize*0.18&&centerArmDistance<=centerCoreDistance+rootSize*0.04)flags[component]=1;
+    if(centerArmDistance<=rootSize*0.12&&centerArmDistance<=centerCoreDistance+rootSize*0.02)flags[component]=1;
   }
   return flags;
 }
@@ -1310,7 +1310,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const directSegmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
   const influenceReach=segment=>{
     const length=Math.sqrt(segment.lengthSq);
-    if(segment.isArmLimb)return Math.max(rootSize*0.14,length*0.65);
+    if(segment.isArmLimb)return Math.max(rootSize*0.08,length*0.35);
     if(segment.isDistalLimb)return Math.max(rootSize*0.035,length*0.35);
     return Math.max(rootSize*0.04,length*0.4);
   };
@@ -1324,7 +1324,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,rootVertices,modelBounds,rootSize):null;
   const armSurfaceComponentCount=armSurfaceComponents?armSurfaceComponents.reduce((sum,flag)=>sum+flag,0):0;
-  const sigma=Math.max(rootSize*0.035,1e-5),maxGap=rootSize*0.045;
+  const sigma=Math.max(rootSize*0.025,1e-5),maxGap=rootSize*0.02;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
   const hitDistances=new Float32Array(segmentData.length),hitParameters=new Float32Array(segmentData.length);
@@ -1374,8 +1374,10 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       if(candidateSegment.isDistalLimb&&hitDistances[candidate]>candidateReach)continue;
       const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}
     }
-    if(secondaryIndex>=0&&bestGap<=maxGap&&hitDistances[secondaryIndex]<=nearestDistance*1.35+rootSize*0.01){
-      const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex],amount=Math.exp(-(bestGap*bestGap)/(2*sigma*sigma));
+    if(secondaryIndex>=0&&bestGap<=maxGap&&hitDistances[secondaryIndex]<=nearestDistance*1.15+rootSize*0.005){
+      const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex];
+      let amount=Math.min(0.3,Math.exp(-(bestGap*bestGap)/(2*sigma*sigma)));
+      if(primarySegment.isArmLimb!==seg.isArmLimb||/Shoulder$/.test(primarySegment.name)!==/Shoulder$/.test(seg.name))amount=Math.min(amount,0.08);
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;
     }
@@ -1385,12 +1387,12 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
   await extendArmWeightsOverSurface(dense,allowedInfluences,diffusionGraph,groups,segmentData,rootVertices,rootSize,count,boneCount);
   let next=new Float32Array(dense.length);
-  for(let iteration=0;diffusionGraph&&iteration<8;iteration++){
+  for(let iteration=0;diffusionGraph&&iteration<6;iteration++){
     for(let v=0;v<count;v++){
       if(v>0&&v%8192===0)await new Promise(resolve=>requestAnimationFrame(resolve));
       const offset=v*boneCount,neighbors=diffusionGraph.neighbors[v],neighborWeights=diffusionGraph.weights[v];
       if(!neighbors.length){next.set(dense.subarray(offset,offset+boneCount),offset);continue;}
-      const self=.35,neighborMix=.65;
+      const self=.55,neighborMix=.45;
       for(let b=0;b<boneCount;b++){
         if(!allowedInfluences[offset+b]){next[offset+b]=0;continue;}
         let value=dense[offset+b]*self;

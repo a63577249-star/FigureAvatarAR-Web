@@ -645,32 +645,40 @@ async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
   return {neighbors,weights,componentIds,componentCenters};
 }
 
-function classifyArmSurfaceComponents(graph,segments,bounds,rootSize){
+function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
   const flags=new Uint8Array(graph.componentCenters.length);
   if(!graph.componentCenters.length)return flags;
   const center=bounds.getCenter(new THREE.Vector3()),extent=bounds.getSize(new THREE.Vector3());
   const armSegments=segments.filter(segment=>segment.isArmInfluence);
   const coreSegments=segments.filter(segment=>segment.isCore);
   if(!armSegments.length)return flags;
-  const distanceToSegment=(point,segment)=>{
-    const dx=point.x-segment.ax,dy=point.y-segment.ay,dz=point.z-segment.az;
+  const minArmDistance=new Float32Array(flags.length),minCoreDistance=new Float32Array(flags.length);
+  minArmDistance.fill(Infinity);minCoreDistance.fill(Infinity);
+  const maxLateral=new Float32Array(flags.length),minY=new Float32Array(flags.length),maxY=new Float32Array(flags.length);
+  minY.fill(Infinity);maxY.fill(-Infinity);
+  const distanceToSegment=(px,py,pz,segment)=>{
+    const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
     const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
-    return point.distanceTo(new THREE.Vector3(segment.ax+segment.abx*t,segment.ay+segment.aby*t,segment.az+segment.abz*t));
+    return Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t));
   };
+  for(let vertex=0;vertex<graph.componentIds.length;vertex++){
+    const component=graph.componentIds[vertex],px=positions[vertex*3],py=positions[vertex*3+1],pz=positions[vertex*3+2];
+    maxLateral[component]=Math.max(maxLateral[component],Math.abs(px-center.x));
+    minY[component]=Math.min(minY[component],py);maxY[component]=Math.max(maxY[component],py);
+    for(const segment of armSegments)minArmDistance[component]=Math.min(minArmDistance[component],distanceToSegment(px,py,pz,segment));
+    for(const segment of coreSegments)minCoreDistance[component]=Math.min(minCoreDistance[component],distanceToSegment(px,py,pz,segment));
+  }
   for(let component=0;component<graph.componentCenters.length;component++){
-    const point=graph.componentCenters[component],lateral=Math.abs(point.x-center.x);
-    const height=(point.y-bounds.min.y)/Math.max(extent.y,1e-6);
-    if(lateral<Math.max(extent.x*0.075,rootSize*0.025)||height<0.36||height>0.88)continue;
-    let armDistance=Infinity,coreDistance=Infinity;
-    for(const segment of armSegments)armDistance=Math.min(armDistance,distanceToSegment(point,segment));
-    for(const segment of coreSegments)coreDistance=Math.min(coreDistance,distanceToSegment(point,segment));
-    if(armDistance<=rootSize*0.2&&armDistance<=coreDistance+rootSize*0.035)flags[component]=1;
+    const lateral=maxLateral[component];
+    const verticalOverlap=maxY[component]>=bounds.min.y+extent.y*0.36&&minY[component]<=bounds.min.y+extent.y*0.9;
+    if(lateral<Math.max(extent.x*0.12,rootSize*0.035)||!verticalOverlap)continue;
+    if(minArmDistance[component]<=rootSize*0.16&&minArmDistance[component]<=minCoreDistance[component]+rootSize*0.08)flags[component]=1;
   }
   return flags;
 }
 
 function coincidentVertexGroups(positions, scale) {
-  const vertexCount=positions.length/3,tolerance=Math.max(1e-6,scale*1e-6), toleranceSq=tolerance*tolerance;
+  const vertexCount=positions.length/3,tolerance=Math.max(1e-6,scale*1e-5), toleranceSq=tolerance*tolerance;
   const cells=new Map(), parent=Array.from({length:vertexCount},(_,i)=>i);
   const root=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
   const key=(x,y,z)=>`${x},${y},${z}`;
@@ -1313,7 +1321,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
   if(!lightweightPhoneMode)setStatus('独立した袖や服のパーツを確認しています…');
   const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
-  const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,modelBounds,rootSize):null;
+  const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,rootVertices,modelBounds,rootSize):null;
   const armSurfaceComponentCount=armSurfaceComponents?armSurfaceComponents.reduce((sum,flag)=>sum+flag,0):0;
   const sigma=Math.max(rootSize*0.04,1e-5),maxGap=rootSize*0.12;
   let dense=new Float32Array(count*boneCount);
@@ -1382,11 +1390,14 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       normalizeAllowedWeights(next,offset,offset,boneCount,allowedInfluences,fallbackBones[v]);
     }
     for(const group of groups){
+      const groupMask=new Uint8Array(boneCount);
+      for(const v of group)for(let b=0;b<boneCount;b++)if(allowedInfluences[v*boneCount+b])groupMask[b]=1;
+      for(const v of group)for(let b=0;b<boneCount;b++)if(groupMask[b])allowedInfluences[v*boneCount+b]=1;
       for(let b=0;b<boneCount;b++){
         let sum=0;for(const v of group)sum+=next[v*boneCount+b];
         const average=sum/group.length;for(const v of group)next[v*boneCount+b]=average;
       }
-      for(const v of group){const offset=v*boneCount;normalizeAllowedWeights(next,offset,offset,boneCount,allowedInfluences,fallbackBones[v]);}
+      for(const v of group)normalizeWeights(next,v*boneCount,boneCount);
     }
     [dense,next]=[next,dense];
   }

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <title>写真からモデルを作る | FigureAvatarAR</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#10151f;color:#edf2fa}*{box-sizing:border-box}body{margin:0;line-height:1.65}header{padding:16px max(20px,calc((100vw - 900px)/2));background:#171f2d;border-bottom:1px solid #ffffff1c;display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}header h1{font-size:20px;margin:0}a{color:#b8d7ff}main{max-width:900px;margin:auto;padding:24px 20px 56px}.panel{padding:20px;margin:16px 0;border:1px solid #ffffff24;border-radius:14px;background:#172130}.panel h2{margin:0 0 10px;font-size:18px}.steps{padding-left:1.4em}.steps li{margin:10px 0}.button{display:inline-block;margin:8px 0;padding:12px 18px;border:1px solid #79b8ff;border-radius:10px;background:#284a70;color:#fff;text-decoration:none;font-weight:700}.note{color:#c4cfde;font-size:14px}.warning{border-left:4px solid #e9b85b;padding:10px 14px;background:#292719;color:#f2e3bb;border-radius:6px}.path{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.path span{padding:6px 9px;background:#222d3d;border-radius:8px}@media(max-width:600px){main{padding:16px 14px 40px}header{padding:14px}.panel{padding:16px}}
+  </style>
+</head>
+<body>
+  <header><h1>写真からモデルを作る</h1><nav><a href="./rigging.html">ボーン設定へ</a>　<a href="./index.html">表示ページへ</a></nav></header>
+  <main>
+    <section class="panel">
+      <h2>写真から3Dメッシュを生成</h2>
+      <p>生成処理は利用者のブラウザー内で行う方式です。写真をこのサイトのサーバーへ送らず、生成用の有料GPUサーバーも使いません。端末の性能・対応ブラウザーによって処理時間や結果が変わります。</p>
+      <a class="button" href="https://websfm.app/" target="_blank" rel="noopener noreferrer">写真生成ツールを開く（WebSfM）</a>
+      <p class="note">WebSfMは別サイトで動作するオープンソースのベータ版です。フィギュアの細部まで再現できるかは、写真と端末によって異なります。画像からの再構成は、髪の細い束・透明部品・光沢面・隠れた部分を完全には復元できません。</p>
+    </section>
+    <section class="panel">
+      <h2>撮影の目安</h2>
+      <ul>
+        <li>フィギュアを固定し、カメラを回して周囲を撮ります。正面・斜め・側面・背面を複数の高さから撮影します。</li>
+        <li>隣り合う写真で見える範囲を十分に重ね、全体で40〜80枚ほどを目安にします。</li>
+        <li>距離・照明を一定にし、ピントを合わせます。強い反射や影、背景の変化は避けます。</li>
+        <li>上下や後ろ側など、隠れている面も撮影します。支えや台は後で切り取る必要がある場合があります。</li>
+      </ul>
+      <p class="note">物体が動く、背景が写真ごとに大きく変わる、表面に模様が少ない場合は、カメラ位置の推定や形状復元に失敗することがあります。</p>
+    </section>
+    <section class="panel">
+      <h2>生成したモデルを動かしてAR表示</h2>
+      <ol class="steps">
+        <li>WebSfMで写真を読み込み、位置合わせとメッシュ生成を行います。</li>
+        <li>テクスチャ付きメッシュを <strong>glTF</strong> 形式で書き出します。関連する .bin と画像ファイルもまとめて保存してください。</li>
+        <li>このページに戻り、<a href="./rigging.html">ボーン設定ページ</a>で .gltf と関連ファイルを同時に選択します。関節を配置し、ウェイトを生成してGLBを書き出します。</li>
+        <li><a href="./pose-ar.html">モデル切替・関節操作・AR</a>ページで書き出したGLBを読み込み、動作を調整してAR表示します。</li>
+      </ol>
+      <div class="path" aria-label="作業の流れ"><span>写真</span> → <span>メッシュ</span> → <span>ボーン・ウェイト</span> → <span>動作・AR</span></div>
+    </section>
+    <section class="panel warning">
+      <strong>端末について</strong>
+      <p>WebSfMはChromium系ブラウザー（Chrome / Edge）を推奨しています。WebGPU対応の有無で処理速度が変わり、Safariで実写真を処理する動作は未確認です。まずPCのChromeまたはEdgeで少ない枚数から試してください。処理が止まる、ページが再読み込みされる場合は画像枚数や解像度を下げてください。</p>
+    </section>
+  </main>
+</body>
+</html>

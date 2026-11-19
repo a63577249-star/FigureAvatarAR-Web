@@ -1330,7 +1330,9 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,rootVertices,modelBounds,rootSize):null;
   const armSurfaceComponentCount=armSurfaceComponents?armSurfaceComponents.reduce((sum,flag)=>sum+flag,0):0;
   const headBoneY=BONE_DEFS.find(bone=>bone.name==='head')?.position?.y??modelBounds.max.y;
-  const armFreeHeadY=Math.max(modelBounds.min.y+modelExtent.y*0.76,headBoneY-rootSize*0.10);
+  const armFreeHeadY=Math.max(modelBounds.min.y+modelExtent.y*0.68,headBoneY-rootSize*0.16);
+  const headSegment=segmentData.find(segment=>segment.name==='head');
+  const headProtectRadius=Math.max(rootSize*0.12,headSegment?Math.sqrt(headSegment.lengthSq)*0.8:0);
   const sigma=Math.max(rootSize*0.025,1e-5),maxGap=rootSize*0.02;
   let dense=new Float32Array(count*boneCount);
   const allowedInfluences=new Uint8Array(count*boneCount),fallbackBones=new Uint32Array(count);
@@ -1339,7 +1341,13 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     if(v>0&&v%4096===0){setStatus(`ウェイトを計算しています… ${Math.floor(v/count*100)}%`);await new Promise(resolve=>requestAnimationFrame(resolve));}
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2];
     const component=diffusionGraph?.componentIds?.[v];
-    const isHeadRegion=py>=armFreeHeadY;
+    let isHeadRegion=py>=armFreeHeadY;
+    if(!isHeadRegion&&headSegment){
+      const hx=px-headSegment.ax,hy=py-headSegment.ay,hz=pz-headSegment.az;
+      const ht=headSegment.lengthSq>1e-12?THREE.MathUtils.clamp((hx*headSegment.abx+hy*headSegment.aby+hz*headSegment.abz)/headSegment.lengthSq,0,1):0;
+      const hdx=px-(headSegment.ax+headSegment.abx*ht),hdy=py-(headSegment.ay+headSegment.aby*ht),hdz=pz-(headSegment.az+headSegment.abz*ht);
+      isHeadRegion=hdx*hdx+hdy*hdy+hdz*hdz<=headProtectRadius*headProtectRadius;
+    }
     const armSurface=!isHeadRegion&&component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
     let primaryIndex=-1,primaryT=0,nearestDistance=Infinity;
     let coreIndex=-1,coreT=0,coreDistance=Infinity;

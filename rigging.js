@@ -1172,6 +1172,65 @@ function normalizeAllowedWeights(values,offset,boneOffset,boneCount,allowed,fall
   for(let b=0;b<boneCount;b++)if(allowed[boneOffset+b])values[offset+b]/=sum;
 }
 
+async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,segments,rootVertices,rootSize,count,boneCount){
+  if(!graph)return;
+  const armBones=new Set();
+  for(const segment of segments)if(segment.isArmLimb){armBones.add(segment.a);armBones.add(segment.b);}
+  for(let boneIndex=0;boneIndex<boneCount;boneIndex++){
+    const bone=BONE_DEFS[boneIndex];
+    if(/^(Left|Right)Shoulder$/.test(bone.name))armBones.add(boneIndex);
+  }
+  if(!armBones.size)return;
+  const groupByVertex=new Array(count);
+  for(const group of groups)for(const vertex of group)groupByVertex[vertex]=group;
+  const maxDistance=rootSize*0.32,sigma=Math.max(rootSize*0.18,1e-5),spreadScale=0.88;
+  let processedBones=0;
+  for(const boneIndex of armBones){
+    let seedStrength=0;
+    for(let v=0;v<count;v++)if(allowedInfluences[v*boneCount+boneIndex])seedStrength=Math.max(seedStrength,dense[v*boneCount+boneIndex]);
+    if(seedStrength<0.025)continue;
+    const distances=new Float32Array(count);distances.fill(Infinity);
+    const heap=[];
+    const push=(vertex,distance)=>{
+      let i=heap.length;heap.push([distance,vertex]);
+      while(i>0){const parent=(i-1)>>1;if(heap[parent][0]<=distance)break;heap[i]=heap[parent];i=parent;}
+      heap[i]=[distance,vertex];
+    };
+    const pop=()=>{
+      const first=heap[0],last=heap.pop();
+      if(heap.length){let i=0;while(true){let child=i*2+1;if(child>=heap.length)break;if(child+1<heap.length&&heap[child+1][0]<heap[child][0])child++;if(heap[child][0]>=last[0])break;heap[i]=heap[child];i=child;}heap[i]=last;}
+      return first;
+    };
+    for(let v=0;v<count;v++)if(allowedInfluences[v*boneCount+boneIndex]){
+      const seedGroup=groupByVertex[v];
+      if(seedGroup){for(const member of seedGroup)if(distances[member]!==0){distances[member]=0;push(member,0);}}
+      else if(distances[v]!==0){distances[v]=0;push(v,0);}
+    }
+    let visited=0;
+    while(heap.length){
+      const [distance,vertex]=pop();
+      if(distance!==distances[vertex]||distance>maxDistance)continue;
+      for(const neighbor of graph.neighbors[vertex]){
+        const dx=rootVertices[vertex*3]-rootVertices[neighbor*3];
+        const dy=rootVertices[vertex*3+1]-rootVertices[neighbor*3+1];
+        const dz=rootVertices[vertex*3+2]-rootVertices[neighbor*3+2];
+        const nextDistance=distance+Math.hypot(dx,dy,dz);
+        if(nextDistance<distances[neighbor]&&nextDistance<=maxDistance){distances[neighbor]=nextDistance;push(neighbor,nextDistance);}
+      }
+      if(++visited%4096===0){setStatus(`袖のウェイトをメッシュ表面に沿って伝えています… ${processedBones+1}/${armBones.size}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
+    }
+    for(let v=0;v<count;v++){
+      const distance=distances[v];if(!Number.isFinite(distance)||distance<=1e-7)continue;
+      const influence=seedStrength*spreadScale*Math.exp(-0.5*(distance/sigma)**2);
+      const offset=v*boneCount;
+      if(influence>dense[offset+boneIndex])dense[offset+boneIndex]=influence;
+      allowedInfluences[offset+boneIndex]=1;
+    }
+    processedBones++;
+  }
+  for(let v=0;v<count;v++)normalizeWeights(dense,v*boneCount,boneCount);
+}
+
 async function generateMeshWeights(entry,bonesByName,rootSize){
   const mesh=entry.mesh, geometry=entry.geometry.clone();
   geometry.deleteAttribute('skinIndex');geometry.deleteAttribute('skinWeight');
@@ -1260,6 +1319,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   if(!lightweightPhoneMode)setStatus('メッシュ表面に沿うウェイト拡散を準備しています…');
   const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
+  await extendArmWeightsOverSurface(dense,allowedInfluences,diffusionGraph,groups,segmentData,rootVertices,rootSize,count,boneCount);
   let next=new Float32Array(dense.length);
   for(let iteration=0;diffusionGraph&&iteration<8;iteration++){
     for(let v=0;v<count;v++){

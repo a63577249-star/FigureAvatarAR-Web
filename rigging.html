@@ -98,12 +98,12 @@
         <h2>4. ウェイトを生成・保存</h2>
         <button id="generate">ボーンとウェイトを生成</button>
         <button id="export" class="secondary" disabled>リギング済みGLBを保存</button>
-        <p class="hint">通常部分は近いボーン区間から割り当て、メッシュ表面の角度に基づく拡散でなじませます。袖は腕にウェイトが届く範囲を広くし、脚から離れたスカート裾は胴体側へ割り当てて脚へ引かれにくくします。BlenderのBone Heatに近い考え方ですが、同一の実装ではありません。部位指定は自動計算より優先します。</p>
+        <p class="hint">通常部分は近いボーン区間から割り当て、メッシュ表面の角度とつながりに沿ってウェイトを拡散します。袖は腕に近い部分から腕の影響を表面に沿って伝え、脚から離れたスカート裾は胴体側へ割り当てて脚へ引かれにくくします。BlenderのBone Heatに近い考え方ですが、同一の実装ではありません。部位指定は自動計算より優先します。</p>
       </section>
       <div id="status" role="status">モデルファイルを選択してください。</div>
     </aside>
     <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
   </main>
-  <script type="module" src="./rigging.js?v=arm-sleeve-following-weights-20261119"></script>
+  <script type="module" src="./rigging.js?v=topology-arm-weight-spread-20261119"></script>
 </body>
 </html>

@@ -1024,7 +1024,9 @@ async function predictAiSkeleton(){
   const logitsName=decoder.outputNames.find(name=>/logits/i.test(name))||decoder.outputNames[0];
   const cacheForInput=name=>name.replace(/^past\./,'present.');
   const prefillTokenCount=prefill.length/1024;
-  const prefillChunkSize=executionProvider==='webgpu'?(isMobile?16:128):prefillTokenCount;
+  // PC UniRig is run as one inference pass; mobile uses its separate Pose Lite
+  // path for normal use and should not split the desktop model's prefill either.
+  const prefillChunkSize=prefillTokenCount;
   let decoded=null;
   let cache={};
   for(let offset=0;offset<prefillTokenCount;offset+=prefillChunkSize){
@@ -1042,10 +1044,6 @@ async function predictAiSkeleton(){
       cache[inputName]=decoded[outputName];
     }
     if(offset+chunkLength<prefillTokenCount)decoded[logitsName]?.dispose?.();
-    if(prefillChunkSize<prefillTokenCount){
-      setStatus(`${isMobile?'スマートフォン向けに':''}AIモデルを分割処理しています… ${Math.min(offset+chunkLength,prefillTokenCount)}/${prefillTokenCount}`);
-      await new Promise(resolve=>setTimeout(resolve,0));
-    }
   }
   const tokens=[];
   let coordinateCount=0,branchCoordinatesRemaining=0,completedJoints=0,hasCoordinates=false;

@@ -1067,8 +1067,10 @@ async function predictAiSkeleton(){
     tokens.push(token);
     if(token<256){
       coordinateCount++;hasCoordinates=true;
-      if(branchCoordinatesRemaining>0)branchCoordinatesRemaining--;
-      if(coordinateCount%6===0){completedJoints++;lastCompleteTokenCount=tokens.length;}
+      if(branchCoordinatesRemaining>0){
+        branchCoordinatesRemaining--;
+        if(branchCoordinatesRemaining===0){completedJoints++;lastCompleteTokenCount=tokens.length;}
+      }else if(coordinateCount%3===0){completedJoints++;lastCompleteTokenCount=tokens.length;}
     }else if(token===256){
       coordinateCount=0;branchCoordinatesRemaining=6;
     }else if(token===260||token===261||token===262){
@@ -1110,72 +1112,39 @@ async function predictAiSkeleton(){
   return {tokens,center:cloud.center,longest:cloud.longest,surfaceSamples:cloud.vertices,truncated};
 }
 
-function buildAiBoneDefs(tokens,center,longest,surfaceSamples){
-  const joints=[],parents=[];
+function buildAiBoneDefs(tokens,center,longest){
+  const joints=[],parentPoints=[];
   const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
     .multiplyScalar(longest*0.5).add(center);
-  const parentTolerance=longest*(6/256),parentToleranceSq=parentTolerance*parentTolerance;
-  const duplicateTolerance=longest*(0.5/256),duplicateToleranceSq=duplicateTolerance*duplicateTolerance;
-  const surfaceBounds={min:[Infinity,Infinity,Infinity],max:[-Infinity,-Infinity,-Infinity]};
-  for(let i=0;i<surfaceSamples.length;i+=3){
-    for(let axis=0;axis<3;axis++){
-      surfaceBounds.min[axis]=Math.min(surfaceBounds.min[axis],surfaceSamples[i+axis]);
-      surfaceBounds.max[axis]=Math.max(surfaceBounds.max[axis],surfaceSamples[i+axis]);
-    }
-  }
-  const surfaceDistanceSq=point=>{
-    const x=(point.x-center.x)*2/longest,y=(point.y-center.y)*2/longest,z=(point.z-center.z)*2/longest;
-    let nearest=Infinity;
-    for(let i=0;i<surfaceSamples.length;i+=3){
-      const dx=x-surfaceSamples[i],dy=y-surfaceSamples[i+1],dz=z-surfaceSamples[i+2];
-      const distance=dx*dx+dy*dy+dz*dz;
-      if(distance<nearest)nearest=distance;
-    }
-    return nearest;
-  };
-  // Joints are expected to sit inside the body, so distance-to-surface alone
-  // must not reject them. Apply the surface-distance test only to points clearly
-  // outside the sampled model bounds; otherwise internal hips/shoulders can be
-  // removed and their whole child chains disappear.
-  const boundsPadding=0.05;
-  const maxSurfaceDistanceSq=0.22*0.22;
+  let branchPending=false,lastJoint=null;
   for(let i=0;i<tokens.length;){
     const token=tokens[i];
     if(token===258)break;
-    if(token===256){i++;continue;}
+    if(token===256){branchPending=true;lastJoint=null;i++;continue;}
     if(token===260||token===261||token===262){i++;continue;}
     if(token<0||token>=256)throw new Error(`骨格トークンを解釈できません: ${token}`);
-    // UniRig emits one six-coordinate record per bone: parent xyz, then joint xyz.
-    // The parent coordinates are a reference to an earlier joint, not another joint.
-    if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
-    const parentPoint=decodePoint(tokens.slice(i,i+3));
-    const jointPoint=decodePoint(tokens.slice(i+3,i+6));
-    const normalized=[
-      (jointPoint.x-center.x)*2/longest,
-      (jointPoint.y-center.y)*2/longest,
-      (jointPoint.z-center.z)*2/longest
-    ];
-    const outsideSampleBounds=normalized.some((value,axis)=>
-      value<surfaceBounds.min[axis]-boundsPadding||value>surfaceBounds.max[axis]+boundsPadding
-    );
-    if(outsideSampleBounds&&surfaceDistanceSq(jointPoint)>maxSurfaceDistanceSq){i+=6;continue;}
-    if(!joints.length){
-      joints.push(jointPoint);parents.push(-1);
+    if(branchPending){
+      if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
+      parentPoints.push(decodePoint(tokens.slice(i,i+3)));
+      lastJoint=decodePoint(tokens.slice(i+3,i+6));
+      joints.push(lastJoint);i+=6;branchPending=false;
     }else{
-      let nearest=-1,nearestDistance=Infinity;
-      for(let candidate=0;candidate<joints.length;candidate++){
-        const distance=joints[candidate].distanceToSquared(parentPoint);
-        if(distance<nearestDistance){nearestDistance=distance;nearest=candidate;}
-      }
-      // Parent coordinates are quantized references to prior joints. A distant
-      // nearest match is a malformed branch; don't draw a long false bone.
-      if(nearestDistance<=parentToleranceSq&&jointPoint.distanceToSquared(joints[nearest])>duplicateToleranceSq){
-        joints.push(jointPoint);parents.push(nearest);
-      }
+      if(i+2>=tokens.length||tokens.slice(i,i+3).some(value=>value<0||value>=256))break;
+      const current=decodePoint(tokens.slice(i,i+3));
+      parentPoints.push(lastJoint?lastJoint.clone():current.clone());
+      joints.push(current);lastJoint=current;i+=3;
     }
-    i+=6;
   }
-  if(joints.length<8)throw new Error('AI骨格の多くがモデル表面から離れていました。正面向きにして再推定するか、標準19関節を調整してください。');
+  if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
+  const parents=new Array(joints.length).fill(-1);
+  for(let joint=1;joint<joints.length;joint++){
+    let best=0,bestDistance=Infinity;
+    for(let candidate=joint-1;candidate>=0;candidate--){
+      const distance=joints[candidate].distanceToSquared(parentPoints[joint]);
+      if(distance<bestDistance){bestDistance=distance;best=candidate;}
+    }
+    parents[joint]=best;
+  }
   return joints.map((position,index)=>({
     name:`ai_joint_${String(index+1).padStart(2,'0')}`,
     label:`AI関節 ${index+1}`,

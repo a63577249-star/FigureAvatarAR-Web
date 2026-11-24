@@ -1099,15 +1099,29 @@ async function predictAiSkeleton(){
   if(!completedJoints)throw new Error('AIが骨格を生成できませんでした。モデルの向きや形状を確認してください。');
   for(const tensor of Object.values(cache))tensor.dispose?.();
   decoded?.[logitsName]?.dispose?.();
-  return {tokens,center:cloud.center,longest:cloud.longest};
+  return {tokens,center:cloud.center,longest:cloud.longest,surfaceSamples:cloud.vertices};
 }
 
-function buildAiBoneDefs(tokens,center,longest){
+function buildAiBoneDefs(tokens,center,longest,surfaceSamples){
   const joints=[],parents=[];
   const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
     .multiplyScalar(longest*0.5).add(center);
   const parentTolerance=longest*(6/256),parentToleranceSq=parentTolerance*parentTolerance;
   const duplicateTolerance=longest*(0.5/256),duplicateToleranceSq=duplicateTolerance*duplicateTolerance;
+  const surfaceDistanceSq=point=>{
+    const x=(point.x-center.x)*2/longest,y=(point.y-center.y)*2/longest,z=(point.z-center.z)*2/longest;
+    let nearest=Infinity;
+    for(let i=0;i<surfaceSamples.length;i+=3){
+      const dx=x-surfaceSamples[i],dy=y-surfaceSamples[i+1],dz=z-surfaceSamples[i+2];
+      const distance=dx*dx+dy*dy+dz*dz;
+      if(distance<nearest)nearest=distance;
+    }
+    return nearest;
+  };
+  // Reject predicted joint points farther than 11% of the model's longest
+  // dimension from any surface sample. This filters stray chains while allowing
+  // joints inside thick clothing or the torso.
+  const maxSurfaceDistanceSq=0.22*0.22;
   for(let i=0;i<tokens.length;){
     const token=tokens[i];
     if(token===258)break;
@@ -1119,6 +1133,7 @@ function buildAiBoneDefs(tokens,center,longest){
     if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
     const parentPoint=decodePoint(tokens.slice(i,i+3));
     const jointPoint=decodePoint(tokens.slice(i+3,i+6));
+    if(surfaceDistanceSq(jointPoint)>maxSurfaceDistanceSq){i+=6;continue;}
     if(!joints.length){
       joints.push(jointPoint);parents.push(-1);
     }else{
@@ -1135,7 +1150,7 @@ function buildAiBoneDefs(tokens,center,longest){
     }
     i+=6;
   }
-  if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
+  if(joints.length<8)throw new Error('AI骨格の多くがモデル表面から離れていました。正面向きにして再推定するか、標準19関節を調整してください。');
   return joints.map((position,index)=>({
     name:`ai_joint_${String(index+1).padStart(2,'0')}`,
     label:`AI関節 ${index+1}`,
@@ -1249,7 +1264,7 @@ async function runAiAutoRig(mode){
     }
     if(IS_MOBILE_DEVICE) setStatus('PC向けUniRigをスマートフォンで実行中です。大きなモデルを取得するため、ページが再読み込みされる可能性があります。');
     const prediction=await predictAiSkeleton();
-    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest);
+    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest,prediction.surfaceSamples);
     if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');
     BONE_DEFS.splice(0,BONE_DEFS.length,...nodes);
     rigMode='ai';activeBoneName=BONE_DEFS[0].name;

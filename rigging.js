@@ -953,7 +953,7 @@ async function predictAiSkeleton(){
   const surfaceSampleCount=isMobile?2048:16384;
   setStatus(executionProvider==='wasm'?'CPU（WebAssembly）でモデル表面から点と法線を抽出しています…':`${isMobile?'スマートフォン向けに点数を抑えて':''}モデル表面から点と法線を抽出しています…`);
   const cloud=sampleModelSurface(surfaceSampleCount);
-  let latents,latentFeatureWidth,sourceLatentCount;
+  let latents,latentData,latentFeatureWidth,sourceLatentCount;
   if(useCpuEncoder){
     const mobileResult=await encodeMobileShapeInWorker(cloud.vertices,cloud.normals,surfaceSampleCount);
     latents={data:mobileResult.latentData};
@@ -973,7 +973,11 @@ async function predictAiSkeleton(){
     const latentName=encoder.outputNames.find(name=>/latent/i.test(name))||encoder.outputNames[0];
     latents=encoded[latentName];
     latentFeatureWidth=latents.dims.at(-1)||1024;
-    sourceLatentCount=latents.dims[1]||Math.floor(latents.data.length/latentFeatureWidth);
+    // WebGPU outputs live on the GPU; reading Tensor.data throws. Download once
+    // before using the latent vectors in the CPU-side decoder input assembly.
+    try{latentData=executionProvider==='webgpu'?await latents.getData():latents.data;}
+    catch(error){throw new Error(`形状解析結果の取得中に失敗しました: ${error.message||error}`);}
+    sourceLatentCount=latents.dims[1]||Math.floor(latentData.length/latentFeatureWidth);
   }
   if(encoder&&isMobile){
     try{await encoder.release();}
@@ -994,8 +998,11 @@ async function predictAiSkeleton(){
   try{embedded=await embed.run({[embed.inputNames[0]]:ids});}
   catch(error){throw new Error(`AI入力の埋め込み処理に失敗しました（${useCpuEncoder?'端末内CPU':'GPU'}）: ${error.message||error}`);}
   const prompt=embedded[embed.outputNames[0]];
+  let promptData;
+  try{promptData=executionProvider==='webgpu'?await prompt.getData():prompt.data;}
+  catch(error){throw new Error(`AI入力の埋め込み結果取得中に失敗しました: ${error.message||error}`);}
   const mobileLatentCount=sourceLatentCount;
-  let decoderLatents=latents.data;
+  let decoderLatents=latentData;
   if(mobileLatentCount<sourceLatentCount){
     setStatus(`スマートフォン用に形状情報を${mobileLatentCount}個へ圧縮しています…`);
     decoderLatents=new Float32Array(mobileLatentCount*latentFeatureWidth);
@@ -1005,13 +1012,13 @@ async function predictAiSkeleton(){
       const divisor=last-first;
       for(let feature=0;feature<latentFeatureWidth;feature++){
         let sum=0;
-        for(let source=first;source<last;source++)sum+=latents.data[source*latentFeatureWidth+feature];
+        for(let source=first;source<last;source++)sum+=latentData[source*latentFeatureWidth+feature];
         decoderLatents[target*latentFeatureWidth+feature]=sum/divisor;
       }
     }
   }
-  const prefill=new Float32Array(decoderLatents.length+prompt.data.length);
-  prefill.set(decoderLatents,0);prefill.set(prompt.data,decoderLatents.length);
+  const prefill=new Float32Array(decoderLatents.length+promptData.length);
+  prefill.set(decoderLatents,0);prefill.set(promptData,decoderLatents.length);
   const pastInputs=decoder.inputNames.filter(name=>/^past\./.test(name));
   if(!pastInputs.length)throw new Error('AIモデルのキャッシュ入力形式を認識できません。');
   const logitsName=decoder.outputNames.find(name=>/logits/i.test(name))||decoder.outputNames[0];

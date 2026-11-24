@@ -56,8 +56,8 @@
     <aside>
       <section class="group">
         <h2>1. モデルを追加</h2>
-        <input id="model-files" type="file" accept=".glb,.gltf,.obj" multiple>
-        <p class="hint">GLB / glTF / OBJに対応。glTFは関連する.bin・画像ファイルも同時に選択してください。モデルはこのブラウザー内で処理し、サーバーへ送信しません。PMXはBlenderなどでGLBへ変換してください。</p>
+        <input id="model-files" type="file" accept=".glb,.gltf,.obj,.mtl,image/*" multiple>
+        <p class="hint">GLB / glTF / OBJに対応。OBJは色とテクスチャを保つため、OBJ・同名のMTL・参照画像をまとめて選択してください。画像のフォルダー構成も保ってください。GLBはテクスチャを一体化できるため最も確実です。モデルはブラウザー内で処理し、サーバーへ送信しません。PMXはBlenderでGLBへ変換してください。</p>
         <label class="checkrow"><input id="auto-rig" type="checkbox" checked>標準19関節を仮配置する</label>
       </section>
       <section class="group">

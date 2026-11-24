@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
@@ -79,6 +80,7 @@ scene.add(regionTransform.getHelper());
 
 let modelRoot = null;
 let modelEntries = [];
+let releaseModelResources = null;
 let generatedRig = null;
 let activeBoneName = BONE_DEFS[0].name;
 let placeMode = false;
@@ -175,6 +177,8 @@ function revokeOldModel() {
       else if (object.material) object.material.dispose();
     });
   }
+  releaseModelResources?.();
+  releaseModelResources = null;
   markerGroup.clear();
   for(const child of [...protectedOverlayGroup.children]){protectedOverlayGroup.remove(child);child.geometry?.dispose();child.material?.dispose();}
   if (rigLines) { scene.remove(rigLines); rigLines.geometry.dispose(); rigLines.material.dispose(); rigLines = null; }
@@ -189,17 +193,56 @@ function revokeOldModel() {
 
 function resourceManager(files) {
   const manager = new THREE.LoadingManager();
-  const byName = new Map(files.map(file => [decodeURIComponent(file.name), file]));
+  const byPath = new Map();
+  const byBaseName = new Map();
+  const ambiguousBaseNames = new Set();
+  const normalize = value => {
+    let path = String(value || '').split(/[?#]/,1)[0].replace(/\\/g,'/').replace(/^\.\//,'').replace(/^\/+/, '');
+    try { path = decodeURIComponent(path); } catch {}
+    return path.toLowerCase();
+  };
+  for (const file of files) {
+    const paths = [file.name, file.webkitRelativePath].filter(Boolean);
+    for (const path of paths) byPath.set(normalize(path), file);
+    const base = normalize(file.name.split(/[\\/]/).pop());
+    if (byBaseName.has(base) && byBaseName.get(base) !== file) ambiguousBaseNames.add(base);
+    else byBaseName.set(base, file);
+  }
   const objectUrls = [];
   manager.setURLModifier(url => {
-    const clean = decodeURIComponent(url.split(/[?#]/,1)[0].split(/[\\/]/).pop());
-    const file = byName.get(clean);
+    const normalized = normalize(url);
+    const base = normalized.split('/').pop();
+    const file = byPath.get(normalized) || (!ambiguousBaseNames.has(base) ? byBaseName.get(base) : null);
     if (!file) return url;
     const blobUrl = URL.createObjectURL(file);
     objectUrls.push(blobUrl);
     return blobUrl;
   });
   return { manager, release: () => objectUrls.forEach(URL.revokeObjectURL) };
+}
+
+function findObjMaterialFile(objText, objFile, files) {
+  const normalize = value => {
+    let path = String(value || '').replace(/\\/g,'/').replace(/^\.\//,'').replace(/^\/+/, '');
+    try { path = decodeURIComponent(path); } catch {}
+    return path.toLowerCase();
+  };
+  const candidates = [];
+  for (const match of objText.matchAll(/^\s*mtllib\s+(.+?)\s*$/gim)) {
+    const ref = match[1].trim();
+    if (ref) candidates.push(ref);
+  }
+  const objBase = objFile.name.replace(/\.[^.]+$/, '');
+  const sibling = files.find(file => file.name.toLowerCase() === `${objBase}.mtl`.toLowerCase());
+  const basenameMatch = ref => files.find(file => file.name.toLowerCase() === ref.replace(/\\/g,'/').split('/').pop().toLowerCase());
+  const byReference = candidates.map(ref =>
+    files.find(file => normalize(file.name) === normalize(ref) || normalize(file.webkitRelativePath) === normalize(ref))
+      || basenameMatch(ref)
+  ).find(Boolean);
+  if (sibling && !candidates.length) candidates.push(sibling.name);
+  const wanted = new Set(candidates.map(normalize));
+  const match = files.find(file => wanted.has(normalize(file.name)) || wanted.has(normalize(file.webkitRelativePath)));
+  return { file: byReference || match || sibling || null, referenced: candidates.length > 0 };
 }
 
 async function loadModel(files) {
@@ -211,9 +254,24 @@ async function loadModel(files) {
   setStatus(`${main.name}を読み込んでいます…`);
   try {
     let root;
+    let loadNote = '';
     if (/\.obj$/i.test(main.name)) {
-      const { manager } = resourceManager(files);
-      root = new OBJLoader(manager).parse(await main.text());
+      const resources = resourceManager(files);
+      releaseModelResources = resources.release;
+      const objText = await main.text();
+      const { file: mtlFile, referenced } = findObjMaterialFile(objText, main, files);
+      const objLoader = new OBJLoader(resources.manager);
+      if (mtlFile) {
+        const materials = new MTLLoader(resources.manager).parse(await mtlFile.text(), '');
+        materials.preload();
+        objLoader.setMaterials(materials);
+        loadNote = ` MTL「${mtlFile.name}」を適用しました。テクスチャの読み込み完了後にGLBへ保存してください。`;
+      } else if (referenced) {
+        loadNote = ' OBJが参照するMTLが選択されていません。OBJ・MTL・画像テクスチャをまとめて選び直すと色を復元できます。';
+      } else {
+        loadNote = ' MTL参照がありません。色・模様を付けるにはBlenderからMTLとテクスチャも一緒に書き出してください。';
+      }
+      root = objLoader.parse(objText);
     } else {
       const resources = resourceManager(files);
       const loader = new GLTFLoader(resources.manager);
@@ -227,6 +285,8 @@ async function loadModel(files) {
     if (skinned.length) {
       setStatus(`このモデルには既存ボーンがあります（${skinned.slice(0,3).join('、')}）。この編集画面は、まだボーンのない静的メッシュを対象にしています。Blender等でボーンを外したGLB/OBJを選んでください。`);
       root.traverse(object => { if (object.geometry) object.geometry.dispose(); });
+      releaseModelResources?.();
+      releaseModelResources = null;
       return;
     }
     modelRoot = root;
@@ -257,7 +317,7 @@ async function loadModel(files) {
     setRigEditingEnabled(true);
     if (document.querySelector('#auto-rig').checked) placeStandardRig();
     viewHelp.textContent = '関節を選択し「位置を置く」をONにして、モデル上の関節中心をタップします。';
-    setStatus(`${main.name}を読み込みました。${modelEntries.length}個のMeshが見つかりました。関節位置を確認してください。`);
+    setStatus(`${main.name}を読み込みました。${modelEntries.length}個のMeshが見つかりました。関節位置を確認してください。${loadNote}`);
   } catch (error) {
     console.error(error);
     revokeOldModel();

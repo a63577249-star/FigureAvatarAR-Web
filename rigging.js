@@ -833,7 +833,7 @@ function sampleModelSurface(pointCount=16384) {
     const n=new THREE.Vector3(sampledNormals[sample*3],sampledNormals[sample*3+1],sampledNormals[sample*3+2]).normalize();
     sampledNormals[sample*3]=n.x;sampledNormals[sample*3+1]=n.y;sampledNormals[sample*3+2]=n.z;
   }
-  return {vertices,normals:sampledNormals,center,longest};
+  return {vertices,normals:sampledNormals,center,longest,bounds};
 }
 
 function allowedAiToken(logits,coordinateCount,branchCoordinatesRemaining,hasCoordinates){
@@ -1097,10 +1097,10 @@ async function predictAiSkeleton(){
   if(!completedJoints)throw new Error('AIが骨格を生成できませんでした。モデルの向きや形状を確認してください。');
   for(const tensor of Object.values(cache))tensor.dispose?.();
   decoded?.[logitsName]?.dispose?.();
-  return {tokens,center:cloud.center,longest:cloud.longest};
+  return {tokens,center:cloud.center,longest:cloud.longest,bounds:cloud.bounds};
 }
 
-function buildAiBoneDefs(tokens,center,longest){
+function buildAiBoneDefs(tokens,center,longest,bounds){
   const joints=[],parentPoints=[];
   const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
     .multiplyScalar(longest*0.5).add(center);
@@ -1120,7 +1120,14 @@ function buildAiBoneDefs(tokens,center,longest){
   const linkedJoints=[],parents=[];
   const acceptedParentDistanceSq=(longest*(24/256))**2;
   const duplicateDistanceSq=(longest*(1/256))**2;
+  const boundsPadding=longest*0.025;
   for(let joint=0;joint<joints.length;joint++){
+    const point=joints[joint];
+    if(bounds&&(
+      point.x<bounds.min.x-boundsPadding||point.x>bounds.max.x+boundsPadding||
+      point.y<bounds.min.y-boundsPadding||point.y>bounds.max.y+boundsPadding||
+      point.z<bounds.min.z-boundsPadding||point.z>bounds.max.z+boundsPadding
+    ))continue;
     let nearest=-1,nearestDistance=Infinity;
     for(let candidate=0;candidate<linkedJoints.length;candidate++){
       const distance=linkedJoints[candidate].distanceToSquared(parentPoints[joint]);
@@ -1250,7 +1257,7 @@ async function runAiAutoRig(mode){
     }
     if(IS_MOBILE_DEVICE) setStatus('PC向けUniRigをスマートフォンで実行中です。大きなモデルを取得するため、ページが再読み込みされる可能性があります。');
     const prediction=await predictAiSkeleton();
-    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest);
+    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest,prediction.bounds);
     if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');
     BONE_DEFS.splice(0,BONE_DEFS.length,...nodes);
     rigMode='ai';activeBoneName=BONE_DEFS[0].name;

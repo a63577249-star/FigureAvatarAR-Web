@@ -1068,10 +1068,8 @@ async function predictAiSkeleton(){
     tokens.push(token);
     if(token<256){
       coordinateCount++;hasCoordinates=true;
-      if(branchCoordinatesRemaining>0){
-        branchCoordinatesRemaining--;
-        if(branchCoordinatesRemaining===0)completedJoints++;
-      }else if(coordinateCount%3===0)completedJoints++;
+      if(branchCoordinatesRemaining>0)branchCoordinatesRemaining--;
+      if(coordinateCount%6===0)completedJoints++;
     }else if(token===256){
       coordinateCount=0;branchCoordinatesRemaining=6;
     }else if(token===260||token===261||token===262){
@@ -1108,25 +1106,18 @@ function buildAiBoneDefs(tokens,center,longest){
   const joints=[],parentPoints=[];
   const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
     .multiplyScalar(longest*0.5).add(center);
-  let branchPending=false,lastJoint=null;
   for(let i=0;i<tokens.length;){
     const token=tokens[i];
     if(token===258)break;
-    if(token===256){branchPending=true;lastJoint=null;i++;continue;}
+    if(token===256){i++;continue;}
     if(token===260||token===261||token===262){i++;continue;}
     if(token<0||token>=256)throw new Error(`骨格トークンを解釈できません: ${token}`);
-    if(branchPending){
-      if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
-      parentPoints.push(decodePoint(tokens.slice(i,i+3)));
-      lastJoint=decodePoint(tokens.slice(i+3,i+6));
-      joints.push(lastJoint);i+=6;branchPending=false;
-    }else{
-      if(i+2>=tokens.length||tokens.slice(i,i+3).some(value=>value<0||value>=256))break;
-      const current=decodePoint(tokens.slice(i,i+3));
-      parentPoints.push(lastJoint?lastJoint.clone():current.clone());
-      joints.push(current);lastJoint=current;
-      i+=3;
-    }
+    // UniRig emits one six-coordinate record per bone: parent xyz, then joint xyz.
+    // The parent coordinates are a reference to an earlier joint, not another joint.
+    if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
+    parentPoints.push(decodePoint(tokens.slice(i,i+3)));
+    joints.push(decodePoint(tokens.slice(i+3,i+6)));
+    i+=6;
   }
   if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
   const parents=new Array(joints.length).fill(-1);

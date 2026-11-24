@@ -1117,16 +1117,26 @@ function buildAiBoneDefs(tokens,center,longest){
     i+=6;
   }
   if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
-  const parents=new Array(joints.length).fill(-1);
-  for(let joint=1;joint<joints.length;joint++){
-    let best=0,bestDistance=Infinity;
-    for(let candidate=joint-1;candidate>=0;candidate--){
-      const distance=joints[candidate].distanceToSquared(parentPoints[joint]);
-      if(distance<bestDistance){bestDistance=distance;best=candidate;}
+  const linkedJoints=[],parents=[];
+  const acceptedParentDistanceSq=(longest*(12/256))**2;
+  const duplicateDistanceSq=(longest*(1/256))**2;
+  for(let joint=0;joint<joints.length;joint++){
+    let nearest=-1,nearestDistance=Infinity;
+    for(let candidate=0;candidate<linkedJoints.length;candidate++){
+      const distance=linkedJoints[candidate].distanceToSquared(parentPoints[joint]);
+      if(distance<nearestDistance){nearestDistance=distance;nearest=candidate;}
     }
-    parents[joint]=best;
+    if(joint>0&&(nearest<0||nearestDistance>acceptedParentDistanceSq))continue;
+    let duplicate=false;
+    for(const existing of linkedJoints){
+      if(existing.distanceToSquared(joints[joint])<=duplicateDistanceSq){duplicate=true;break;}
+    }
+    if(duplicate)continue;
+    linkedJoints.push(joints[joint]);
+    parents.push(joint===0?-1:nearest);
   }
-  return joints.map((position,index)=>({
+  if(linkedJoints.length<8)throw new Error('AI骨格の親子関係を十分に確認できませんでした。標準19関節を手動配置してください。');
+  return linkedJoints.map((position,index)=>({
     name:`ai_joint_${String(index+1).padStart(2,'0')}`,
     label:`AI関節 ${index+1}`,
     parent:parents[index]<0?null:`ai_joint_${String(parents[index]+1).padStart(2,'0')}`,

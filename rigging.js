@@ -1118,7 +1118,7 @@ function buildAiBoneDefs(tokens,center,longest){
   }
   if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
   const linkedJoints=[],parents=[];
-  const acceptedParentDistanceSq=(longest*(12/256))**2;
+  const acceptedParentDistanceSq=(longest*(24/256))**2;
   const duplicateDistanceSq=(longest*(1/256))**2;
   for(let joint=0;joint<joints.length;joint++){
     let nearest=-1,nearestDistance=Infinity;
@@ -1126,16 +1126,17 @@ function buildAiBoneDefs(tokens,center,longest){
       const distance=linkedJoints[candidate].distanceToSquared(parentPoints[joint]);
       if(distance<nearestDistance){nearestDistance=distance;nearest=candidate;}
     }
-    if(joint>0&&(nearest<0||nearestDistance>acceptedParentDistanceSq))continue;
     let duplicate=false;
     for(const existing of linkedJoints){
       if(existing.distanceToSquared(joints[joint])<=duplicateDistanceSq){duplicate=true;break;}
     }
     if(duplicate)continue;
     linkedJoints.push(joints[joint]);
-    parents.push(joint===0?-1:nearest);
+    // Preserve the predicted joint even when its parent reference is dubious.
+    // A distant reference is left unconnected rather than deleting this joint
+    // and cascading that rejection through the rest of its branch.
+    parents.push(joint===0||nearest<0||nearestDistance>acceptedParentDistanceSq?-1:nearest);
   }
-  if(linkedJoints.length<8)throw new Error('AI骨格の親子関係を十分に確認できませんでした。標準19関節を手動配置してください。');
   return linkedJoints.map((position,index)=>({
     name:`ai_joint_${String(index+1).padStart(2,'0')}`,
     label:`AI関節 ${index+1}`,

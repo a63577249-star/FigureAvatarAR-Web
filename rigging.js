@@ -1047,7 +1047,6 @@ async function predictAiSkeleton(){
   }
   const tokens=[];
   let coordinateCount=0,branchCoordinatesRemaining=0,completedJoints=0,hasCoordinates=false;
-  let lastCompleteTokenCount=0;
   const maxGeneratedTokens=isMobile?288:512;
   for(let step=0;step<maxGeneratedTokens;step++){
     const logitsTensor=decoded[logitsName],vocab=267;
@@ -1067,10 +1066,8 @@ async function predictAiSkeleton(){
     tokens.push(token);
     if(token<256){
       coordinateCount++;hasCoordinates=true;
-      if(branchCoordinatesRemaining>0){
-        branchCoordinatesRemaining--;
-        if(branchCoordinatesRemaining===0){completedJoints++;lastCompleteTokenCount=tokens.length;}
-      }else if(coordinateCount%3===0){completedJoints++;lastCompleteTokenCount=tokens.length;}
+      if(branchCoordinatesRemaining>0)branchCoordinatesRemaining--;
+      if(coordinateCount%6===0)completedJoints++;
     }else if(token===256){
       coordinateCount=0;branchCoordinatesRemaining=6;
     }else if(token===260||token===261||token===262){
@@ -1096,44 +1093,28 @@ async function predictAiSkeleton(){
       cache[name]=decoded[outputName];
     }
   }
-  let truncated=false;
-  if(tokens.at(-1)!==258){
-    // A few difficult meshes can make the decoder run into the safety cap.
-    // Keep only fully emitted six-coordinate records and let the geometric
-    // validation below reject stray joints, instead of discarding the whole rig.
-    if(!lastCompleteTokenCount)throw new Error('AI骨格が終了記号まで到達せず、有効な関節もありません。標準19関節を手動配置してください。');
-    tokens.length=lastCompleteTokenCount;
-    tokens.push(258);
-    truncated=true;
-  }
+  if(tokens.at(-1)!==258)throw new Error('AI骨格が終了記号まで到達せず、出力が不完全なため表示しません。標準19関節の手動配置とウェイト生成は続けて利用できます。');
   if(!completedJoints)throw new Error('AIが骨格を生成できませんでした。モデルの向きや形状を確認してください。');
   for(const tensor of Object.values(cache))tensor.dispose?.();
   decoded?.[logitsName]?.dispose?.();
-  return {tokens,center:cloud.center,longest:cloud.longest,surfaceSamples:cloud.vertices,truncated};
+  return {tokens,center:cloud.center,longest:cloud.longest};
 }
 
 function buildAiBoneDefs(tokens,center,longest){
   const joints=[],parentPoints=[];
   const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
     .multiplyScalar(longest*0.5).add(center);
-  let branchPending=false,lastJoint=null;
   for(let i=0;i<tokens.length;){
     const token=tokens[i];
     if(token===258)break;
-    if(token===256){branchPending=true;lastJoint=null;i++;continue;}
+    if(token===256){i++;continue;}
     if(token===260||token===261||token===262){i++;continue;}
     if(token<0||token>=256)throw new Error(`骨格トークンを解釈できません: ${token}`);
-    if(branchPending){
-      if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
-      parentPoints.push(decodePoint(tokens.slice(i,i+3)));
-      lastJoint=decodePoint(tokens.slice(i+3,i+6));
-      joints.push(lastJoint);i+=6;branchPending=false;
-    }else{
-      if(i+2>=tokens.length||tokens.slice(i,i+3).some(value=>value<0||value>=256))break;
-      const current=decodePoint(tokens.slice(i,i+3));
-      parentPoints.push(lastJoint?lastJoint.clone():current.clone());
-      joints.push(current);lastJoint=current;i+=3;
-    }
+    // Each UniRig record is parent xyz followed by the joint xyz.
+    if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
+    parentPoints.push(decodePoint(tokens.slice(i,i+3)));
+    joints.push(decodePoint(tokens.slice(i+3,i+6)));
+    i+=6;
   }
   if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
   const parents=new Array(joints.length).fill(-1);
@@ -1258,15 +1239,13 @@ async function runAiAutoRig(mode){
     }
     if(IS_MOBILE_DEVICE) setStatus('PC向けUniRigをスマートフォンで実行中です。大きなモデルを取得するため、ページが再読み込みされる可能性があります。');
     const prediction=await predictAiSkeleton();
-    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest,prediction.surfaceSamples);
+    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest);
     if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');
     BONE_DEFS.splice(0,BONE_DEFS.length,...nodes);
     rigMode='ai';activeBoneName=BONE_DEFS[0].name;
     updateMarkers();renderBoneList();
     autoButton.textContent='標準19関節に戻す';
-    setStatus(prediction.truncated
-      ?`AI骨格の出力が上限に達したため、完成済み部分から${nodes.length}関節を配置しました。関節点とつながりを確認し、必要なら修正してください。`
-      :`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
+    setStatus(`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
   }catch(error){
     console.error(error);
     const detail=error.message||String(error);

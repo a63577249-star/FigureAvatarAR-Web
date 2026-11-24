@@ -1103,9 +1103,11 @@ async function predictAiSkeleton(){
 }
 
 function buildAiBoneDefs(tokens,center,longest){
-  const joints=[],parentPoints=[];
+  const joints=[],parents=[];
   const decodePoint=tokens=>new THREE.Vector3(...tokens.map(token=>(token+0.5)/256*2-1))
     .multiplyScalar(longest*0.5).add(center);
+  const parentTolerance=longest*(6/256),parentToleranceSq=parentTolerance*parentTolerance;
+  const duplicateTolerance=longest*(0.5/256),duplicateToleranceSq=duplicateTolerance*duplicateTolerance;
   for(let i=0;i<tokens.length;){
     const token=tokens[i];
     if(token===258)break;
@@ -1115,20 +1117,25 @@ function buildAiBoneDefs(tokens,center,longest){
     // UniRig emits one six-coordinate record per bone: parent xyz, then joint xyz.
     // The parent coordinates are a reference to an earlier joint, not another joint.
     if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
-    parentPoints.push(decodePoint(tokens.slice(i,i+3)));
-    joints.push(decodePoint(tokens.slice(i+3,i+6)));
+    const parentPoint=decodePoint(tokens.slice(i,i+3));
+    const jointPoint=decodePoint(tokens.slice(i+3,i+6));
+    if(!joints.length){
+      joints.push(jointPoint);parents.push(-1);
+    }else{
+      let nearest=-1,nearestDistance=Infinity;
+      for(let candidate=0;candidate<joints.length;candidate++){
+        const distance=joints[candidate].distanceToSquared(parentPoint);
+        if(distance<nearestDistance){nearestDistance=distance;nearest=candidate;}
+      }
+      // Parent coordinates are quantized references to prior joints. A distant
+      // nearest match is a malformed branch; don't draw a long false bone.
+      if(nearestDistance<=parentToleranceSq&&jointPoint.distanceToSquared(joints[nearest])>duplicateToleranceSq){
+        joints.push(jointPoint);parents.push(nearest);
+      }
+    }
     i+=6;
   }
   if(!joints.length)throw new Error('AIの骨格データを読み取れませんでした。');
-  const parents=new Array(joints.length).fill(-1);
-  for(let joint=1;joint<joints.length;joint++){
-    let best=0,bestDistance=Infinity;
-    for(let candidate=joint-1;candidate>=0;candidate--){
-      const distance=joints[candidate].distanceToSquared(parentPoints[joint]);
-      if(distance<bestDistance){bestDistance=distance;best=candidate;}
-    }
-    parents[joint]=best;
-  }
   return joints.map((position,index)=>({
     name:`ai_joint_${String(index+1).padStart(2,'0')}`,
     label:`AI関節 ${index+1}`,

@@ -104,6 +104,11 @@
     </aside>
     <section id="viewport" aria-label="3Dモデル編集画面"><div id="view-help">モデルを読み込むとここに表示されます。ドラッグで回転、ピンチで拡大縮小。</div></section>
   </main>
-  <script type="module" src="./rigging.js?v=ai-six-coordinate-decoder-20261124"></script>
+  <script type="module">
+    import(`./rigging.js?v=${Date.now()}`).catch(error => {
+      const status = document.getElementById('status');
+      if (status) status.textContent = `編集画面の読み込みに失敗しました: ${error.message || error}`;
+    });
+  </script>
 </body>
 </html>

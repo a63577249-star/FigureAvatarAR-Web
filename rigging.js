@@ -1049,6 +1049,7 @@ async function predictAiSkeleton(){
   }
   const tokens=[];
   let coordinateCount=0,branchCoordinatesRemaining=0,completedJoints=0,hasCoordinates=false;
+  let lastCompleteTokenCount=0;
   const maxGeneratedTokens=isMobile?288:512;
   for(let step=0;step<maxGeneratedTokens;step++){
     const logitsTensor=decoded[logitsName],vocab=267;
@@ -1069,7 +1070,7 @@ async function predictAiSkeleton(){
     if(token<256){
       coordinateCount++;hasCoordinates=true;
       if(branchCoordinatesRemaining>0)branchCoordinatesRemaining--;
-      if(coordinateCount%6===0)completedJoints++;
+      if(coordinateCount%6===0){completedJoints++;lastCompleteTokenCount=tokens.length;}
     }else if(token===256){
       coordinateCount=0;branchCoordinatesRemaining=6;
     }else if(token===260||token===261||token===262){
@@ -1095,11 +1096,20 @@ async function predictAiSkeleton(){
       cache[name]=decoded[outputName];
     }
   }
-  if(tokens.at(-1)!==258)throw new Error('AI骨格が終了記号まで到達せず、結果が不完全です。骨格の表示は行いません。');
+  let truncated=false;
+  if(tokens.at(-1)!==258){
+    // A few difficult meshes can make the decoder run into the safety cap.
+    // Keep only fully emitted six-coordinate records and let the geometric
+    // validation below reject stray joints, instead of discarding the whole rig.
+    if(!lastCompleteTokenCount)throw new Error('AI骨格が終了記号まで到達せず、有効な関節もありません。標準19関節を手動配置してください。');
+    tokens.length=lastCompleteTokenCount;
+    tokens.push(258);
+    truncated=true;
+  }
   if(!completedJoints)throw new Error('AIが骨格を生成できませんでした。モデルの向きや形状を確認してください。');
   for(const tensor of Object.values(cache))tensor.dispose?.();
   decoded?.[logitsName]?.dispose?.();
-  return {tokens,center:cloud.center,longest:cloud.longest,surfaceSamples:cloud.vertices};
+  return {tokens,center:cloud.center,longest:cloud.longest,surfaceSamples:cloud.vertices,truncated};
 }
 
 function buildAiBoneDefs(tokens,center,longest,surfaceSamples){
@@ -1270,7 +1280,9 @@ async function runAiAutoRig(mode){
     rigMode='ai';activeBoneName=BONE_DEFS[0].name;
     updateMarkers();renderBoneList();
     autoButton.textContent='標準19関節に戻す';
-    setStatus(`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
+    setStatus(prediction.truncated
+      ?`AI骨格の出力が上限に達したため、完成済み部分から${nodes.length}関節を配置しました。関節点とつながりを確認し、必要なら修正してください。`
+      :`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
   }catch(error){
     console.error(error);
     const detail=error.message||String(error);

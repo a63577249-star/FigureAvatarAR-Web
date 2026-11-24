@@ -1118,6 +1118,13 @@ function buildAiBoneDefs(tokens,center,longest,surfaceSamples){
     .multiplyScalar(longest*0.5).add(center);
   const parentTolerance=longest*(6/256),parentToleranceSq=parentTolerance*parentTolerance;
   const duplicateTolerance=longest*(0.5/256),duplicateToleranceSq=duplicateTolerance*duplicateTolerance;
+  const surfaceBounds={min:[Infinity,Infinity,Infinity],max:[-Infinity,-Infinity,-Infinity]};
+  for(let i=0;i<surfaceSamples.length;i+=3){
+    for(let axis=0;axis<3;axis++){
+      surfaceBounds.min[axis]=Math.min(surfaceBounds.min[axis],surfaceSamples[i+axis]);
+      surfaceBounds.max[axis]=Math.max(surfaceBounds.max[axis],surfaceSamples[i+axis]);
+    }
+  }
   const surfaceDistanceSq=point=>{
     const x=(point.x-center.x)*2/longest,y=(point.y-center.y)*2/longest,z=(point.z-center.z)*2/longest;
     let nearest=Infinity;
@@ -1128,9 +1135,11 @@ function buildAiBoneDefs(tokens,center,longest,surfaceSamples){
     }
     return nearest;
   };
-  // Reject predicted joint points farther than 11% of the model's longest
-  // dimension from any surface sample. This filters stray chains while allowing
-  // joints inside thick clothing or the torso.
+  // Joints are expected to sit inside the body, so distance-to-surface alone
+  // must not reject them. Apply the surface-distance test only to points clearly
+  // outside the sampled model bounds; otherwise internal hips/shoulders can be
+  // removed and their whole child chains disappear.
+  const boundsPadding=0.05;
   const maxSurfaceDistanceSq=0.22*0.22;
   for(let i=0;i<tokens.length;){
     const token=tokens[i];
@@ -1143,7 +1152,15 @@ function buildAiBoneDefs(tokens,center,longest,surfaceSamples){
     if(i+5>=tokens.length||tokens.slice(i,i+6).some(value=>value<0||value>=256))break;
     const parentPoint=decodePoint(tokens.slice(i,i+3));
     const jointPoint=decodePoint(tokens.slice(i+3,i+6));
-    if(surfaceDistanceSq(jointPoint)>maxSurfaceDistanceSq){i+=6;continue;}
+    const normalized=[
+      (jointPoint.x-center.x)*2/longest,
+      (jointPoint.y-center.y)*2/longest,
+      (jointPoint.z-center.z)*2/longest
+    ];
+    const outsideSampleBounds=normalized.some((value,axis)=>
+      value<surfaceBounds.min[axis]-boundsPadding||value>surfaceBounds.max[axis]+boundsPadding
+    );
+    if(outsideSampleBounds&&surfaceDistanceSq(jointPoint)>maxSurfaceDistanceSq){i+=6;continue;}
     if(!joints.length){
       joints.push(jointPoint);parents.push(-1);
     }else{

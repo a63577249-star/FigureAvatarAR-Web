@@ -405,9 +405,25 @@ function fitAiPredictionToBasic19(candidates){
   const box=modelLocalBounds(),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
   const height=Math.max(size.y,0.001),width=Math.max(size.x,0.001),longest=Math.max(size.x,size.y,size.z,0.001);
   const y=ratio=>box.min.y+height*ratio,x=ratio=>center.x+width*ratio;
-  // Accessory and sleeve bounds can be much wider than the torso. Cap arm reach using body height.
-  const armReach=Math.min(width*0.49,height*0.34);
+  // Accessory bounds can be wider than the body, so estimate the arm endpoint
+  // from vertices in the upper-body band and cap it by body height.
+  const armReachLimit=Math.min(width*0.49,height*0.38);
   const legSpacing=Math.min(width*0.09,height*0.075);
+  const estimateArmEndpoint=side=>{
+    let farthest=height*0.12,endpointY=y(0.68);
+    for(const entry of getModelEntries()){
+      const positions=entry.rootPositions;if(!positions)continue;
+      const count=positions.length/3,step=Math.max(1,Math.ceil(count/80000));
+      for(let vertex=0;vertex<count;vertex+=step){
+        const offset=vertex*3,px=positions[offset],py=positions[offset+1];
+        const ratio=(py-box.min.y)/height,lateral=(px-center.x)*side;
+        if(ratio<0.50||ratio>0.86||lateral<=farthest)continue;
+        farthest=lateral;endpointY=py;
+      }
+    }
+    const reach=Math.min(farthest,armReachLimit);
+    return {x:center.x+side*reach*0.94,y:y(0.73)+(endpointY-y(0.73))*0.90};
+  };
   const targetByName=new Map([
     ['hip',new THREE.Vector3(center.x,y(.48),center.z)],
     ['supine',new THREE.Vector3(center.x,y(.61),center.z)],
@@ -416,10 +432,14 @@ function fitAiPredictionToBasic19(candidates){
     ['head',new THREE.Vector3(center.x,y(.94),center.z)]
   ]);
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
-    targetByName.set(`${prefix}Shoulder`,new THREE.Vector3(center.x+side*armReach*0.34,y(.77),center.z));
-    targetByName.set(`${prefix}UpperArm`,new THREE.Vector3(center.x+side*armReach*0.55,y(.74),center.z));
-    targetByName.set(`${prefix}Elbow`,new THREE.Vector3(center.x+side*armReach*0.78,y(.71),center.z));
-    targetByName.set(`${prefix}Wrist`,new THREE.Vector3(center.x+side*armReach,y(.68),center.z));
+    const shoulderOffset=Math.min(width*0.16,height*0.13);
+    const shoulder=new THREE.Vector3(center.x+side*shoulderOffset,y(.73),center.z);
+    const endpoint=estimateArmEndpoint(side);
+    const wrist=new THREE.Vector3(endpoint.x,endpoint.y,center.z);
+    targetByName.set(`${prefix}Shoulder`,shoulder);
+    targetByName.set(`${prefix}UpperArm`,shoulder.clone().lerp(wrist,0.34));
+    targetByName.set(`${prefix}Elbow`,shoulder.clone().lerp(wrist,0.68));
+    targetByName.set(`${prefix}Wrist`,wrist);
     targetByName.set(`${prefix}UpperLeg`,new THREE.Vector3(center.x+side*legSpacing,y(.45),center.z));
     targetByName.set(`${prefix}Knee`,new THREE.Vector3(center.x+side*legSpacing,y(.25),center.z));
     targetByName.set(`${prefix}Ankle`,new THREE.Vector3(center.x+side*legSpacing,y(.06),center.z));

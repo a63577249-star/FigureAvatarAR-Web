@@ -6,7 +6,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-anatomical-proportions-20261126';
-import { createWeightingTools } from './weighting.js?v=weighting-sleeve-mobile-bounds-20261126d';
+import { createWeightingTools } from './weighting.js?v=weighting-shoulder-arm-side-mobile-refine-20261126e';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
@@ -800,7 +800,7 @@ function placeMobileFallbackRig(){
   // Wide sleeves and hats can dominate the model bounds. Use the same
   // height-limited arm reach as the regular 19-joint placement instead of
   // putting wrists at the outer edge of the costume.
-  const armReach=Math.min(w*0.49,h*0.36),shoulderOffset=Math.min(w*0.16,h*0.075);
+  const armReach=Math.min(w*0.44,h*0.32),shoulderOffset=Math.min(w*0.14,h*0.07);
   const legSpacing=Math.min(w*0.09,h*0.04);
   const set=(name,px,py)=>{const bone=boneByName(name);bone.position=new THREE.Vector3(px,py,center.z);};
   // Keep mobile fallback at the same body-relative heights as the standard
@@ -905,15 +905,17 @@ async function estimateMobileTemplateRig(){
     const torsoX=fallback.get('chest').x;
     const armReach=Math.abs(fallback.get(`${prefix}Wrist`).x-torsoX);
     const refine=(point,name,minLateral)=>{
-      const reference=fallback.get(name),value=point.clone().lerp(reference,0.5);
+      const reference=fallback.get(name);
+      const referenceMix=name.endsWith('Wrist')?0.68:name.endsWith('Elbow')?0.58:0.5;
+      const value=point.clone().lerp(reference,referenceMix);
       const lateral=(value.x-torsoX)*side,minX=Math.max(armReach*minLateral,size.y*0.025);
       if(lateral<minX)value.x=torsoX+side*minX;
       value.y=THREE.MathUtils.clamp(value.y,reference.y-size.y*0.12,reference.y+size.y*0.02);
       return value;
     };
     const fittedShoulder=refine(shoulder,`${prefix}Shoulder`,0.12);
-    const fittedElbow=refine(elbow,`${prefix}Elbow`,0.62);
-    const fittedWrist=refine(wrist,`${prefix}Wrist`,0.84);
+    const fittedElbow=refine(elbow,`${prefix}Elbow`,0.58);
+    const fittedWrist=refine(wrist,`${prefix}Wrist`,0.78);
     return {shoulder:fittedShoulder,upperArm:fittedShoulder.clone().lerp(fittedElbow,0.52),elbow:fittedElbow,wrist:fittedWrist};
   };
   const leftArm=refineMobileArm(1,'Left',leftShoulder,leftElbow,leftWrist);

@@ -180,6 +180,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     return {name:childName,a,b:index,ax:start.x,ay:start.y,az:start.z,bx:end.x,by:end.y,bz:end.z,abx,aby,abz,lengthSq:abx*abx+aby*aby+abz*abz,isDistalLimb,isCore,isArmLimb,isArmInfluence,isFootInfluence};
   }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
+  const upperArmSegments=new Map(segmentData.filter(segment=>/^(Left|Right)UpperArm$/.test(segment.name)).map(segment=>[segment.name,segment]));
   const directSegmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
   const influenceReach=segment=>{
     const length=Math.sqrt(segment.lengthSq);
@@ -189,8 +190,20 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   };
   const shoulderSegmentApplies=(segment,px,py,pz)=>{
     if(!/Shoulder$/.test(segment.name))return true;
+    const sideName=segment.name.startsWith('Left')?'Left':'Right',side=sideName==='Left'?1:-1;
     const shoulderLateral=Math.abs((segment.ax+segment.bx)*0.5-modelCenter.x);
-    if(Math.abs(px-modelCenter.x)<Math.max(modelExtent.x*0.08,shoulderLateral*0.7))return false;
+    if((px-modelCenter.x)*side<Math.max(modelExtent.x*0.08,shoulderLateral*0.7))return false;
+    // Expand shoulder influence along the child upper-arm surface only. The
+    // chest-side region keeps the narrow original radius, so the torso does
+    // not inherit the added shoulder motion.
+    const upperArm=upperArmSegments.get(`${sideName}UpperArm`);
+    if(upperArm){
+      const dx=px-upperArm.ax,dy=py-upperArm.ay,dz=pz-upperArm.az;
+      const t=upperArm.lengthSq>1e-12?THREE.MathUtils.clamp((dx*upperArm.abx+dy*upperArm.aby+dz*upperArm.abz)/upperArm.lengthSq,0,1):0;
+      const ox=px-(upperArm.ax+upperArm.abx*t),oy=py-(upperArm.ay+upperArm.aby*t),oz=pz-(upperArm.az+upperArm.abz*t);
+      const armSideReach=Math.max(rootSize*0.13,Math.sqrt(upperArm.lengthSq)*0.52);
+      if(ox*ox+oy*oy+oz*oz<=armSideReach*armSideReach)return true;
+    }
     const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
     const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
     const ox=px-(segment.ax+segment.abx*t),oy=py-(segment.ay+segment.aby*t),oz=pz-(segment.az+segment.abz*t);
@@ -291,7 +304,9 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex];
       let amount=Math.min(0.3,Math.exp(-(bestGap*bestGap)/(2*sigma*sigma)));
       const shoulderBridge=/Shoulder$/.test(seg.name)&&['chest','neck'].includes(primarySegment.name);
+      const shoulderArmBlend=/Shoulder$/.test(seg.name)&&primarySegment.isArmLimb;
       if(shoulderBridge)amount=Math.min(0.4,Math.max(amount,0.28));
+      else if(shoulderArmBlend)amount=Math.min(0.3,Math.max(amount,0.18));
       else if(primarySegment.isArmLimb!==seg.isArmLimb||/Shoulder$/.test(primarySegment.name)!==/Shoulder$/.test(seg.name))amount=Math.min(amount,0.08);
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;

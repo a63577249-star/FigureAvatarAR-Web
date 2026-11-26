@@ -732,7 +732,7 @@ function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
   if(!graph.componentCenters.length)return flags;
   const center=bounds.getCenter(new THREE.Vector3()),extent=bounds.getSize(new THREE.Vector3());
   const armSegments=segments.filter(segment=>segment.isArmInfluence);
-  const coreSegments=segments.filter(segment=>segment.isCore);
+  const coreSegments=segments.filter(segment=>segment.isCore&&!segment.isArmInfluence);
   if(!armSegments.length)return flags;
   const minY=new Float32Array(flags.length),maxY=new Float32Array(flags.length);
   minY.fill(Infinity);maxY.fill(-Infinity);

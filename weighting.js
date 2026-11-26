@@ -64,22 +64,22 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurf
         const distance=Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t));
         if(distance<nearest){nearest=distance;nearestSegment=segment;nearestT=t;}
       }
+      for(const segment of segments)if(segment.isCore&&!segment.isArmInfluence){
+        const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
+        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+        nearestCore=Math.min(nearestCore,Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t)));
+      }
       // The surface-walk corridor is wider than the seed band. This lets a
       // connected sleeve inherit arm motion beyond the first few seed rows,
       // while the chain height, side and graph distance keep hats and torso
       // surfaces out of the walk.
       if(nearest>allowedRadius||!nearestSegment)continue;
+      if(!isSleeveComponent&&nearest>nearestCore+rootSize*0.045)continue;
       mask[vertex]=1;
       const shoulderRootSeed=/^(Left|Right)(Shoulder|UpperArm)$/.test(nearestSegment.name)
         &&(nearestSegment.name.endsWith('Shoulder')?nearestT>0.45:nearestT<0.78);
       const activeSeedRadius=shoulderRootSeed?shoulderSeedRadius:seedRadius;
       if(nearest>activeSeedRadius)continue;
-      for(const segment of segments){
-        if(!segment.isCore)continue;
-        const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
-        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
-        nearestCore=Math.min(nearestCore,Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t)));
-      }
       // Seed a narrow band of the sleeve even when it belongs to the same
       // connected mesh component as the torso. Require the arm chain to be at
       // least as close as the core, so hats and bodice surfaces stay untouched.
@@ -103,7 +103,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurf
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.38,sigma=Math.max(rootSize*0.20,1e-5),spreadScale=0.66;
+  const maxDistance=rootSize*0.48,sigma=Math.max(rootSize*0.24,1e-5),spreadScale=0.66;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
@@ -362,21 +362,44 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const lowerBodyCoreMargin=Math.max(rootSize*0.025,modelExtent.y*0.02);
   for(let v=0;v<count;v++){
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2],offset=v*boneCount;
+    const component=diffusionGraph?.componentIds?.[v];
+    const isSleeveComponent=component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
+    let closestArmDistance=Infinity,closestCoreDistance=Infinity;
+    for(const segment of segmentData){
+      if(!segment.isArmInfluence&&!(segment.isCore&&!segment.isArmInfluence))continue;
+      const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
+      const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+      const distance=Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t));
+      if(segment.isArmInfluence)closestArmDistance=Math.min(closestArmDistance,distance);
+      if(segment.isCore&&!segment.isArmInfluence)closestCoreDistance=Math.min(closestCoreDistance,distance);
+    }
+    const coreWins=closestArmDistance>closestCoreDistance+lowerBodyCoreMargin;
+    const sleeveStillNearArm=isSleeveComponent&&closestArmDistance<=Math.max(rootSize*0.36,modelExtent.y*0.22);
+    if(coreWins&&!sleeveStillNearArm){
+      for(const boneIndex of armBoneIndices)dense[offset+boneIndex]=0;
+      normalizeWeights(dense,offset,boneCount);
+    }
+    if(headSegment){
+      const hx=px-headSegment.ax,hy=py-headSegment.ay,hz=pz-headSegment.az;
+      const ht=headSegment.lengthSq>1e-12?THREE.MathUtils.clamp((hx*headSegment.abx+hy*headSegment.aby+hz*headSegment.abz)/headSegment.lengthSq,0,1):0;
+      const headDistance=Math.hypot(px-(headSegment.ax+headSegment.abx*ht),py-(headSegment.ay+headSegment.aby*ht),pz-(headSegment.az+headSegment.abz*ht));
+      if((py>=armFreeHeadY||headDistance<=headProtectRadius)&&headDistance<Math.max(rootSize*0.28,modelExtent.y*0.2)){
+        let nearestArm=Infinity;
+        for(const segment of segmentData)if(segment.isArmInfluence){
+          const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
+          const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+          nearestArm=Math.min(nearestArm,Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t)));
+        }
+        if(headDistance+rootSize*0.025<nearestArm){
+          for(const boneIndex of armBoneIndices)dense[offset+boneIndex]=0;
+          normalizeWeights(dense,offset,boneCount);
+        }
+      }
+    }
     if(py<hipY-modelExtent.y*0.035){
-      let nearestArm=Infinity,nearestCore=Infinity;
-      for(const segment of segmentData)if(segment.isArmInfluence){
-        const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
-        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
-        nearestArm=Math.min(nearestArm,Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t)));
-      }
-      for(const segment of segmentData)if(segment.isCore){
-        const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
-        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
-        nearestCore=Math.min(nearestCore,Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t)));
-      }
       // Keep a hanging sleeve tip when it remains closer to the arm than the
       // torso, but remove arm weights from lower-body fabric near the core.
-      if(nearestArm>lowerBodyArmClearance&&nearestArm>nearestCore+lowerBodyCoreMargin){
+      if(closestArmDistance>lowerBodyArmClearance&&closestArmDistance>closestCoreDistance+lowerBodyCoreMargin){
         for(const boneIndex of armBoneIndices)dense[offset+boneIndex]=0;
         normalizeWeights(dense,offset,boneCount);
       }
@@ -385,7 +408,9 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       const side=sideName==='Left'?1:-1,shoulder=shoulderSegments.get(`${sideName}Shoulder`),upperArm=upperArmSegments.get(`${sideName}UpperArm`);
       if(!shoulder||!upperArm)continue;
       const shoulderLateral=Math.abs(shoulder.bx-modelCenter.x);
-      if((px-modelCenter.x)*side<shoulderLateral*0.42)continue;
+      if((px-modelCenter.x)*side<shoulderLateral*0.72)continue;
+      if(py>=armFreeHeadY)continue;
+      if(closestArmDistance>closestCoreDistance+lowerBodyCoreMargin)continue;
       const distance=Math.hypot(px-shoulder.bx,py-shoulder.by,pz-shoulder.bz);
       if(distance>=shoulderPatchRadius)continue;
       const blend=0.42*(1-distance/shoulderPatchRadius)**1.35,shoulderBone=shoulder.b,upperArmBone=upperArm.b;

@@ -34,7 +34,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
     for(let vertex=0;vertex<count;vertex++){
       if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
       const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
-      if((x-center.x)*side<Math.max(rootSize*0.025,extent.x*0.025)
+      if((x-center.x)*side<Math.max(rootSize*0.04,extent.x*0.035)
         ||y<bounds.min.y+extent.y*0.40||y>bounds.max.y-extent.y*0.06)continue;
       let nearest=Infinity;
       for(const segment of sideSegments){
@@ -42,35 +42,19 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
         const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
         nearest=Math.min(nearest,Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t)));
       }
-      if(nearest<=Math.max(rootSize*0.13,extent.y*0.08))mask[vertex]=1;
+      // Keep the propagation corridor tightly attached to the arm chain.
+      // A broad Euclidean corridor also catches nearby torso clothing and
+      // accessories even when they are separate surface islands.
+      if(nearest<=Math.max(rootSize*0.085,extent.y*0.05))mask[vertex]=1;
     }
     armCorridors.set(sideName,mask);
-    const seedRadius=Math.max(rootSize*0.13,extent.y*0.08);
-    for(let vertex=0;vertex<count;vertex++){
-      if(!mask[vertex])continue;
-      if(vertex>0&&vertex%16384===0){setStatus(`袖の表面と隣接頂点を結び付けています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
-      const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
-      let nearest=Infinity,selected=null,selectedT=0;
-      for(const segment of sideSegments){
-        const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
-        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
-        const distance=Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t));
-        if(distance<nearest){nearest=distance;selected=segment;selectedT=t;}
-      }
-      if(!selected||nearest>seedRadius)continue;
-      const amount=1.1*Math.exp(-0.5*(nearest/seedRadius)**2),offset=vertex*boneCount;
-      dense[offset+selected.a]+=amount*(1-selectedT);
-      dense[offset+selected.b]+=amount*selectedT;
-      allowedInfluences[offset+selected.a]=1;allowedInfluences[offset+selected.b]=1;
-      normalizeWeights(dense,offset,boneCount);
-    }
   }
   const groupByVertex=new Array(count);
   for(const group of groups)for(const vertex of group)groupByVertex[vertex]=group;
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.13,sigma=Math.max(rootSize*0.085,1e-5),spreadScale=0.74;
+  const maxDistance=rootSize*0.105,sigma=Math.max(rootSize*0.065,1e-5),spreadScale=0.58;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';

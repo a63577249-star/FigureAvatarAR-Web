@@ -753,7 +753,7 @@ function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
     let centerArmDistance=Infinity,centerCoreDistance=Infinity;
     for(const segment of armSegments)centerArmDistance=Math.min(centerArmDistance,distanceToSegment(componentCenter.x,componentCenter.y,componentCenter.z,segment));
     for(const segment of coreSegments)centerCoreDistance=Math.min(centerCoreDistance,distanceToSegment(componentCenter.x,componentCenter.y,componentCenter.z,segment));
-    if(centerArmDistance<=rootSize*0.12&&centerArmDistance<=centerCoreDistance+rootSize*0.02)flags[component]=1;
+    if(centerArmDistance<=rootSize*0.20&&centerArmDistance<=centerCoreDistance+rootSize*0.025)flags[component]=1;
   }
   return flags;
 }

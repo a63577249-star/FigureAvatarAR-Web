@@ -16,7 +16,7 @@ function normalizeAllowedWeights(values,offset,boneOffset,boneCount,allowed,fall
   for(let b=0;b<boneCount;b++)if(allowed[boneOffset+b])values[offset+b]/=sum;
 }
 
-async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,segments,rootVertices,rootSize,count,boneCount){
+async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurfaceComponents,groups,segments,rootVertices,rootSize,count,boneCount){
   const armBones=new Set();
   for(const segment of segments)if(segment.isArmLimb){
     for(const boneIndex of [segment.a,segment.b])if(!/^(Left|Right)Shoulder$/.test(BONE_DEFS[boneIndex]?.name||''))armBones.add(boneIndex);
@@ -42,11 +42,15 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
     for(let vertex=0;vertex<count;vertex++){
       if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
       const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
+      const component=graph?.componentIds?.[vertex];
+      const isSleeveComponent=component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
+      const allowedDown=isSleeveComponent?Math.max(rootSize*0.28,extent.y*0.13):verticalPaddingDown;
+      const allowedRadius=isSleeveComponent?Math.max(rootSize*0.30,extent.y*0.16):corridorRadius;
       // Kimono-like sleeves can hang well below the elbow when the arm is
       // raised. Extend the corridor downward more than upward so the hanging
       // hem follows the connected sleeve without reaching hats or hair.
       if((x-center.x)*side<lateralLimit
-        ||y<armMinY-verticalPaddingDown||y>armMaxY+verticalPaddingUp)continue;
+        ||y<armMinY-allowedDown||y>armMaxY+verticalPaddingUp)continue;
       if(headSegment){
         const dx=x-headSegment.ax,dy=y-headSegment.ay,dz=z-headSegment.az;
         const t=headSegment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*headSegment.abx+dy*headSegment.aby+dz*headSegment.abz)/headSegment.lengthSq,0,1):0;
@@ -64,7 +68,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       // connected sleeve inherit arm motion beyond the first few seed rows,
       // while the chain height, side and graph distance keep hats and torso
       // surfaces out of the walk.
-      if(nearest>corridorRadius||!nearestSegment)continue;
+      if(nearest>allowedRadius||!nearestSegment)continue;
       mask[vertex]=1;
       const shoulderRootSeed=/^(Left|Right)(Shoulder|UpperArm)$/.test(nearestSegment.name)
         &&(nearestSegment.name.endsWith('Shoulder')?nearestT>0.45:nearestT<0.78);
@@ -99,7 +103,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.24,sigma=Math.max(rootSize*0.14,1e-5),spreadScale=0.62;
+  const maxDistance=rootSize*0.30,sigma=Math.max(rootSize*0.16,1e-5),spreadScale=0.64;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
@@ -321,7 +325,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   }
 
   const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
-  await extendArmWeightsOverSurface(dense,allowedInfluences,diffusionGraph,groups,segmentData,rootVertices,rootSize,count,boneCount);
+  await extendArmWeightsOverSurface(dense,allowedInfluences,diffusionGraph,armSurfaceComponents,groups,segmentData,rootVertices,rootSize,count,boneCount);
   let next=new Float32Array(dense.length);
   for(let iteration=0;diffusionGraph&&iteration<6;iteration++){
     for(let v=0;v<count;v++){
@@ -351,14 +355,16 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   }
   // Reapply a compact shoulder patch after surface smoothing so the shoulder
   // seam cannot be averaged back into the chest weights.
-  const shoulderPatchRadius=Math.max(rootSize*0.14,modelExtent.y*0.14);
+  const shoulderPatchRadius=Math.max(rootSize*0.12,modelExtent.y*0.12);
   const armBoneIndices=new Set(BONE_DEFS.map((bone,index)=>/^(Left|Right)(Shoulder|UpperArm|Elbow|Wrist)$/.test(bone.name)?index:-1).filter(index=>index>=0));
   const hipY=BONE_DEFS.find(bone=>bone.name==='hip')?.position?.y??modelBounds.min.y+modelExtent.y*0.46;
   const lowerBodyArmClearance=Math.max(rootSize*0.04,modelExtent.y*0.035);
   const hipIndex=indexByName.get('hip')??0;
   for(let v=0;v<count;v++){
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2],offset=v*boneCount;
-    if(py<hipY-modelExtent.y*0.035){
+    const component=diffusionGraph?.componentIds?.[v];
+    const isSleeveComponent=component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
+    if(!isSleeveComponent&&py<hipY-modelExtent.y*0.035){
       let nearestArm=Infinity;
       for(const segment of segmentData)if(segment.isArmInfluence){
         const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
@@ -377,10 +383,10 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       if((px-modelCenter.x)*side<shoulderLateral*0.42)continue;
       const distance=Math.hypot(px-shoulder.bx,py-shoulder.by,pz-shoulder.bz);
       if(distance>=shoulderPatchRadius)continue;
-      const blend=0.94*(1-distance/shoulderPatchRadius)**1.25,shoulderBone=shoulder.b,upperArmBone=upperArm.b;
+      const blend=0.62*(1-distance/shoulderPatchRadius)**1.35,shoulderBone=shoulder.b,upperArmBone=upperArm.b;
       for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-blend);
-      dense[offset+shoulderBone]+=blend*0.84;
-      dense[offset+upperArmBone]+=blend*0.16;
+      dense[offset+shoulderBone]+=blend*0.68;
+      dense[offset+upperArmBone]+=blend*0.32;
       normalizeWeights(dense,offset,boneCount);
     }
   }

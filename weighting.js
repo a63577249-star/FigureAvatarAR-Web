@@ -29,12 +29,18 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   for(const sideName of ['Left','Right']){
     const side=sideName==='Left'?1:-1;
     const sideSegments=segments.filter(segment=>segment.isArmInfluence&&segment.name.startsWith(sideName));
+    if(!sideSegments.length)continue;
+    const armMinY=Math.min(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
+    const armMaxY=Math.max(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
+    const verticalPadding=Math.max(rootSize*0.10,extent.y*0.035);
+    const lateralLimit=Math.max(rootSize*0.05,extent.x*0.10);
+    const seedRadius=Math.max(rootSize*0.11,extent.y*0.065);
+    const corridorRadius=Math.max(rootSize*0.18,extent.y*0.11);
     const mask=new Uint8Array(count);
     for(let vertex=0;vertex<count;vertex++){
       if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
       const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
-      if((x-center.x)*side<Math.max(rootSize*0.04,extent.x*0.035)
-        ||y<bounds.min.y+extent.y*0.40||y>bounds.max.y-extent.y*0.12)continue;
+      if((x-center.x)*side<lateralLimit||y<armMinY-verticalPadding||y>armMaxY+verticalPadding)continue;
       let nearest=Infinity,nearestSegment=null,nearestT=0,nearestCore=Infinity;
       for(const segment of sideSegments){
         const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
@@ -42,11 +48,13 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
         const distance=Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t));
         if(distance<nearest){nearest=distance;nearestSegment=segment;nearestT=t;}
       }
-      // Keep the propagation corridor tightly attached to the arm chain.
-      // A broad Euclidean corridor also catches nearby torso clothing and
-      // accessories even when they are separate surface islands.
-      const seedRadius=Math.max(rootSize*0.11,extent.y*0.065);
-      if(nearest>seedRadius||!nearestSegment)continue;
+      // The surface-walk corridor is wider than the seed band. This lets a
+      // connected sleeve inherit arm motion beyond the first few seed rows,
+      // while the chain height, side and graph distance keep hats and torso
+      // surfaces out of the walk.
+      if(nearest>corridorRadius||!nearestSegment)continue;
+      mask[vertex]=1;
+      if(nearest>seedRadius)continue;
       for(const segment of segments){
         if(!segment.isCore)continue;
         const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
@@ -57,9 +65,8 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       // connected mesh component as the torso. Require the arm chain to be at
       // least as close as the core, so hats and bodice surfaces stay untouched.
       const shoulderRootSeed=/^(Left|Right)(Shoulder|UpperArm)$/.test(nearestSegment.name)&&nearestT<0.62;
-      const coreClearance=rootSize*(shoulderRootSeed?0.075:0.025);
+      const coreClearance=rootSize*(shoulderRootSeed?0.045:0.025);
       if(nearest<=nearestCore+coreClearance){
-        mask[vertex]=1;
         const amount=(shoulderRootSeed?0.76:0.68)*Math.exp(-0.5*(nearest/seedRadius)**2),offset=vertex*boneCount;
         for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-amount);
         dense[offset+nearestSegment.a]+=amount*(1-nearestT);
@@ -78,7 +85,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.10,sigma=Math.max(rootSize*0.065,1e-5),spreadScale=0.62;
+  const maxDistance=rootSize*0.12,sigma=Math.max(rootSize*0.075,1e-5),spreadScale=0.62;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
@@ -183,7 +190,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,rootVertices,modelBounds,rootSize):null;
   const armSurfaceComponentCount=armSurfaceComponents?armSurfaceComponents.reduce((sum,flag)=>sum+flag,0):0;
   const headBoneY=BONE_DEFS.find(bone=>bone.name==='head')?.position?.y??modelBounds.max.y;
-  const armFreeHeadY=Math.max(modelBounds.min.y+modelExtent.y*0.68,headBoneY-rootSize*0.16);
+  const armFreeHeadY=Math.max(modelBounds.min.y+modelExtent.y*0.76,headBoneY-rootSize*0.16);
   const headSegment=segmentData.find(segment=>segment.name==='head');
   const headProtectRadius=Math.max(rootSize*0.12,headSegment?Math.sqrt(headSegment.lengthSq)*0.8:0);
   const footHorizontalRadius=Math.max(rootSize*0.08,Math.max(modelExtent.x,modelExtent.z)*0.28);

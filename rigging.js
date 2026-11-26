@@ -6,7 +6,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-anatomical-proportions-20261126';
-import { createWeightingTools } from './weighting.js?v=weighting-shoulder-root-sleeve-20261126b';
+import { createWeightingTools } from './weighting.js?v=weighting-sleeve-head-protection-20261126c';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
@@ -848,11 +848,13 @@ async function estimateMobileTemplateRig(){
   }
   const pose=result?.landmarks?.[0];
   if(!pose||pose.length<29)throw new Error('画面から人物の関節を十分に検出できませんでした。モデルを正面向きにして再試行するか、配置済みの標準19関節を調整してください。');
-  const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,0,1),-worldCenter.z);
+  const ray=new THREE.Raycaster();
   const inwardOffset=maxSize*0.008;
-  const toModelPoint=index=>{
+  const toModelPoint=(index,name)=>{
     const landmark=pose[index];
-    if(!landmark||Math.min(landmark.visibility??1,landmark.presence??1)<0.12)return null;
+    if(!landmark||Math.min(landmark.visibility??1,landmark.presence??1)<0.2
+      ||!Number.isFinite(landmark.x)||!Number.isFinite(landmark.y)
+      ||landmark.x<0||landmark.x>1||landmark.y<0||landmark.y>1)return null;
     ray.setFromCamera(new THREE.Vector2(landmark.x*2-1,1-landmark.y*2),projectionCamera);
     // Project onto the rendered model surface. Intersecting a single center
     // plane made perspective rays expand at the model's depth, pushing hands
@@ -863,12 +865,21 @@ async function estimateMobileTemplateRig(){
       const world=hit.point.clone();
       const normal=hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
       world.addScaledVector(normal,-inwardOffset);
-      return modelRoot.worldToLocal(world);
+      const local=modelRoot.worldToLocal(world);
+      const marginX=size.x*0.025,marginY=size.y*0.025,marginZ=size.z*0.025;
+      const insideBounds=local.x>=bounds.min.x-marginX&&local.x<=bounds.max.x+marginX
+        &&local.y>=bounds.min.y-marginY&&local.y<=bounds.max.y+marginY
+        &&local.z>=bounds.min.z-marginZ&&local.z<=bounds.max.z+marginZ;
+      // Reject confident but anatomically implausible hits (for example a
+      // wrist detected on a far-away sleeve edge) and use the safe template.
+      if(!insideBounds||local.distanceTo(fallback.get(name))>maxSize*0.26)return null;
+      return local;
     }
-    const world=ray.ray.intersectPlane(plane,new THREE.Vector3());
-    return world?modelRoot.worldToLocal(world):null;
+    // A landmark outside the silhouette has no valid surface point. Let the
+    // per-joint fallback handle it instead of projecting it onto empty space.
+    return null;
   };
-  const pick=(index,name)=>toModelPoint(index)||fallback.get(name).clone();
+  const pick=(index,name)=>toModelPoint(index,name)||fallback.get(name).clone();
   const midpoint=(a,b)=>a.clone().add(b).multiplyScalar(0.5);
   const leftShoulder=pick(11,'LeftShoulder'),rightShoulder=pick(12,'RightShoulder');
   const leftElbow=pick(13,'LeftElbow'),rightElbow=pick(14,'RightElbow');

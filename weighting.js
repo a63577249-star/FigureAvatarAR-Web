@@ -45,7 +45,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       // Keep the propagation corridor tightly attached to the arm chain.
       // A broad Euclidean corridor also catches nearby torso clothing and
       // accessories even when they are separate surface islands.
-      const seedRadius=Math.max(rootSize*0.085,extent.y*0.05);
+      const seedRadius=Math.max(rootSize*0.11,extent.y*0.065);
       if(nearest>seedRadius||!nearestSegment)continue;
       for(const segment of segments){
         if(!segment.isCore)continue;
@@ -56,9 +56,11 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       // Seed a narrow band of the sleeve even when it belongs to the same
       // connected mesh component as the torso. Require the arm chain to be at
       // least as close as the core, so hats and bodice surfaces stay untouched.
-      if(nearest<=nearestCore+rootSize*0.025){
+      const shoulderRootSeed=/^(Left|Right)(Shoulder|UpperArm)$/.test(nearestSegment.name)&&nearestT<0.62;
+      const coreClearance=rootSize*(shoulderRootSeed?0.075:0.025);
+      if(nearest<=nearestCore+coreClearance){
         mask[vertex]=1;
-        const amount=0.62*Math.exp(-0.5*(nearest/seedRadius)**2),offset=vertex*boneCount;
+        const amount=(shoulderRootSeed?0.76:0.68)*Math.exp(-0.5*(nearest/seedRadius)**2),offset=vertex*boneCount;
         for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-amount);
         dense[offset+nearestSegment.a]+=amount*(1-nearestT);
         dense[offset+nearestSegment.b]+=amount*nearestT;
@@ -76,7 +78,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.085,sigma=Math.max(rootSize*0.055,1e-5),spreadScale=0.56;
+  const maxDistance=rootSize*0.10,sigma=Math.max(rootSize*0.065,1e-5),spreadScale=0.62;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
@@ -245,7 +247,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     dense[offset+base.a]+=1-primaryT;dense[offset+base.b]+=primaryT;
     allowedInfluences[offset+base.a]=1;allowedInfluences[offset+base.b]=1;
     fallbackBones[v]=primaryT<0.5?base.a:base.b;
-    let secondaryIndex=-1,bestGap=Infinity;
+    let secondaryIndex=-1,bestGap=Infinity,secondaryGapLimit=maxGap;
     const primarySegment=segmentData[primaryIndex];
     for(const candidate of (isFootRegion?[]:directSegmentAdj[primaryIndex])){
       const candidateSegment=segmentData[candidate];
@@ -260,13 +262,16 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       if(!primaryIsArm&&candidateIsArm&&!(/Shoulder$/.test(candidateSegment.name)&&['chest','neck'].includes(primarySegment.name)))continue;
       const candidateReach=influenceReach(candidateSegment);
       if(candidateSegment.isDistalLimb&&hitDistances[candidate]>candidateReach)continue;
-      const gap=hitDistances[candidate]-nearestDistance;if(gap<bestGap){bestGap=gap;secondaryIndex=candidate;}
+      const gap=hitDistances[candidate]-nearestDistance;
+      const shoulderRootBridge=/Shoulder$/.test(candidateSegment.name)&&['chest','neck'].includes(primarySegment.name);
+      const gapLimit=shoulderRootBridge?rootSize*0.055:maxGap;
+      if(gap<bestGap&&gap<=gapLimit){bestGap=gap;secondaryIndex=candidate;secondaryGapLimit=gapLimit;}
     }
-    if(secondaryIndex>=0&&bestGap<=maxGap&&hitDistances[secondaryIndex]<=nearestDistance*1.15+rootSize*0.005){
+    if(secondaryIndex>=0&&bestGap<=secondaryGapLimit&&hitDistances[secondaryIndex]<=nearestDistance*1.15+rootSize*0.005){
       const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex];
       let amount=Math.min(0.3,Math.exp(-(bestGap*bestGap)/(2*sigma*sigma)));
       const shoulderBridge=/Shoulder$/.test(seg.name)&&['chest','neck'].includes(primarySegment.name);
-      if(shoulderBridge)amount=Math.min(0.32,Math.max(amount,0.22));
+      if(shoulderBridge)amount=Math.min(0.4,Math.max(amount,0.28));
       else if(primarySegment.isArmLimb!==seg.isArmLimb||/Shoulder$/.test(primarySegment.name)!==/Shoulder$/.test(seg.name))amount=Math.min(amount,0.08);
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;

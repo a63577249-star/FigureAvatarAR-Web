@@ -849,10 +849,22 @@ async function estimateMobileTemplateRig(){
   const pose=result?.landmarks?.[0];
   if(!pose||pose.length<29)throw new Error('画面から人物の関節を十分に検出できませんでした。モデルを正面向きにして再試行するか、配置済みの標準19関節を調整してください。');
   const ray=new THREE.Raycaster(),plane=new THREE.Plane(new THREE.Vector3(0,0,1),-worldCenter.z);
+  const inwardOffset=maxSize*0.008;
   const toModelPoint=index=>{
     const landmark=pose[index];
     if(!landmark||Math.min(landmark.visibility??1,landmark.presence??1)<0.12)return null;
     ray.setFromCamera(new THREE.Vector2(landmark.x*2-1,1-landmark.y*2),projectionCamera);
+    // Project onto the rendered model surface. Intersecting a single center
+    // plane made perspective rays expand at the model's depth, pushing hands
+    // and feet outside the silhouette, especially on a tall phone viewport.
+    const hits=ray.intersectObjects(modelRoot.children,true);
+    const hit=hits.find(candidate=>candidate.object.isMesh&&candidate.face);
+    if(hit){
+      const world=hit.point.clone();
+      const normal=hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)).normalize();
+      world.addScaledVector(normal,-inwardOffset);
+      return modelRoot.worldToLocal(world);
+    }
     const world=ray.ray.intersectPlane(plane,new THREE.Vector3());
     return world?modelRoot.worldToLocal(world):null;
   };

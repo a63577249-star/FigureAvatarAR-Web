@@ -437,11 +437,10 @@ function fitAiPredictionToBasic19(candidates){
     const endpoint=estimateArmEndpoint(side);
     const wrist=new THREE.Vector3(endpoint.x,endpoint.y,center.z);
     targetByName.set(`${prefix}Shoulder`,shoulder);
-    // These are intermediate rig joints: upper arm stays in the upper-arm
-    // segment, while elbow is placed at the anatomical elbow rather than the
-    // middle of the forearm.
-    targetByName.set(`${prefix}UpperArm`,shoulder.clone().lerp(wrist,0.30));
-    targetByName.set(`${prefix}Elbow`,shoulder.clone().lerp(wrist,0.62));
+    // Place the intermediate joints near the shoulder-side arrow tips in the
+    // rigging reference, keeping the elbow out of the forearm.
+    targetByName.set(`${prefix}UpperArm`,shoulder.clone().lerp(wrist,0.25));
+    targetByName.set(`${prefix}Elbow`,shoulder.clone().lerp(wrist,0.55));
     targetByName.set(`${prefix}Wrist`,wrist);
     targetByName.set(`${prefix}UpperLeg`,new THREE.Vector3(center.x+side*legSpacing,y(.40),center.z));
     targetByName.set(`${prefix}Knee`,new THREE.Vector3(center.x+side*legSpacing,y(.18),center.z));

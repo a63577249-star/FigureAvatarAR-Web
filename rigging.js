@@ -5,7 +5,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-arm-joint-placement-20261126';
+import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-arm-arrow-tips-20261126';
 import { createWeightingTools } from './weighting.js?v=weighting-final-shoulder-patch-lowerbody-guard-20261126k';
 
 const BONE_DEFS = [
@@ -513,10 +513,10 @@ function placeStandardRig() {
     const shoulder=new THREE.Vector3(center.x+side*shoulderOffset,y(.68),center.z);
     const wrist=new THREE.Vector3(center.x+side*armReach,y(.54),center.z);
     at(prefix+'Shoulder',shoulder.x,shoulder.y,shoulder.z);
-    // Keep the elbow at about 62% of the shoulder-to-wrist span. The old
-    // 78% placement put the elbow down the forearm on short or broad models.
-    boneByName(prefix+'UpperArm').position=shoulder.clone().lerp(wrist,0.30);
-    const elbow=shoulder.clone().lerp(wrist,0.62);
+    // Match the shoulder-side arrow tips in the rigging reference: the upper
+    // arm point sits early in the sleeve and the elbow stays near the joint.
+    boneByName(prefix+'UpperArm').position=shoulder.clone().lerp(wrist,0.25);
+    const elbow=shoulder.clone().lerp(wrist,0.55);
     at(prefix+'Elbow',elbow.x,elbow.y,elbow.z);
     at(prefix+'Wrist',wrist.x,wrist.y,wrist.z);
     at(prefix+'UpperLeg',center.x+side*legSpacing,y(.40));
@@ -985,8 +985,8 @@ function placeMobileFallbackRig(){
     const shoulder=new THREE.Vector3(center.x+side*shoulderOffset,y(.68),center.z);
     const wrist=new THREE.Vector3(center.x+side*armReach,y(.54),center.z);
     boneByName(prefix+'Shoulder').position=shoulder;
-    boneByName(prefix+'UpperArm').position=shoulder.clone().lerp(wrist,0.30);
-    boneByName(prefix+'Elbow').position=shoulder.clone().lerp(wrist,0.62);
+    boneByName(prefix+'UpperArm').position=shoulder.clone().lerp(wrist,0.25);
+    boneByName(prefix+'Elbow').position=shoulder.clone().lerp(wrist,0.55);
     boneByName(prefix+'Wrist').position=wrist;
     set(prefix+'UpperLeg',center.x+side*legSpacing,y(.40));
     set(prefix+'Knee',center.x+side*legSpacing,y(.18));

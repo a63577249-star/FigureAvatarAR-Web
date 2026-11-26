@@ -421,6 +421,40 @@ function fitAiPredictionToBasic19(candidates){
     targetByName.set(`${prefix}Knee`,new THREE.Vector3(x(side*.10),y(.25),center.z));
     targetByName.set(`${prefix}Ankle`,new THREE.Vector3(x(side*.10),y(.06),center.z));
   }
+  const snapArmTargetToSurface=(target,side)=>{
+    const entries=getModelEntries();
+    const maxSnapDistance=longest*0.28;
+    const yTolerance=height*0.12;
+    let best=null,bestDistanceSq=maxSnapDistance*maxSnapDistance;
+    for(const entry of entries){
+      const positions=entry.rootPositions;
+      if(!positions)continue;
+      const count=positions.length/3,step=Math.max(1,Math.ceil(count/50000));
+      for(let vertex=0;vertex<count;vertex+=step){
+        const offset=vertex*3,x=positions[offset],py=positions[offset+1],z=positions[offset+2];
+        if((x-center.x)*side<width*0.015||Math.abs(py-target.y)>yTolerance)continue;
+        const dx=x-target.x,dy=py-target.y,dz=z-target.z,distanceSq=dx*dx+dy*dy+dz*dz;
+        if(distanceSq>=bestDistanceSq)continue;
+        bestDistanceSq=distanceSq;
+        best={entry,vertex,x,y:py,z};
+      }
+    }
+    if(!best)return target;
+    const positions=best.entry.rootPositions,normals=best.entry.rootNormals,count=positions.length/3;
+    const step=Math.max(1,Math.ceil(count/50000)),from=Math.max(0,best.vertex-step),to=Math.min(count-1,best.vertex+step);
+    for(let vertex=from;vertex<=to;vertex++){
+      const offset=vertex*3,x=positions[offset],py=positions[offset+1],z=positions[offset+2];
+      if((x-center.x)*side<width*0.015||Math.abs(py-target.y)>yTolerance)continue;
+      const dx=x-target.x,dy=py-target.y,dz=z-target.z,distanceSq=dx*dx+dy*dy+dz*dz;
+      if(distanceSq<bestDistanceSq){bestDistanceSq=distanceSq;best={entry:best.entry,vertex,x,y:py,z};}
+    }
+    const normalArray=best.entry.rootNormals;
+    if(!normalArray)return new THREE.Vector3(best.x,best.y,best.z);
+    const offset=best.vertex*3,normal=new THREE.Vector3(normalArray[offset],normalArray[offset+1],normalArray[offset+2]).normalize();
+    const outward=new THREE.Vector3(best.x-center.x,best.y-center.y,best.z-center.z);
+    if(normal.dot(outward)<0)normal.negate();
+    return new THREE.Vector3(best.x,best.y,best.z).addScaledVector(normal,-Math.min(height*0.015,longest*0.01));
+  };
   const bones=TEMPLATE_BONES.map(bone=>({...bone,position:null,surfacePoint:null,surfaceNormal:null,bone:null,marker:null}));
   const assignments=new Array(bones.length).fill(-1),usedCandidates=new Set(),pairs=[];
   for(let target=0;target<bones.length;target++){
@@ -447,6 +481,11 @@ function fitAiPredictionToBasic19(candidates){
       if(correction.length()>maxCorrection)correction.setLength(maxCorrection);
       bones[index].position.addScaledVector(correction,0.35);
       matched++;
+    }
+    const armMatch=bones[index].name.match(/^(Left|Right)(Shoulder|UpperArm|Elbow|Wrist)$/);
+    if(armMatch){
+      const side=armMatch[1]==='Left'?1:-1;
+      bones[index].position=snapArmTargetToSurface(bones[index].position,side);
     }
   }
   return {bones,matched};

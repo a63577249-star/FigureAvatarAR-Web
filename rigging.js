@@ -863,11 +863,31 @@ async function estimateMobileTemplateRig(){
   const leftKnee=pick(25,'LeftKnee'),rightKnee=pick(26,'RightKnee');
   const leftAnkle=pick(27,'LeftAnkle'),rightAnkle=pick(28,'RightAnkle');
   const chest=midpoint(leftShoulder,rightShoulder),hip=midpoint(leftHip,rightHip),nose=pick(0,'head');
+  // Pose Lite can mistake a wide sleeve or torso edge for an elbow/wrist and
+  // collapse one arm toward the chest. Blend its 2D result with the model
+  // proportions, then enforce a minimum outward progression for the basic
+  // A-pose rig. This still uses the detected vertical placement when valid.
+  const refineMobileArm=(side,prefix,shoulder,elbow,wrist)=>{
+    const torsoX=fallback.get('chest').x;
+    const refine=(point,name,minLateral)=>{
+      const reference=fallback.get(name),value=point.clone().lerp(reference,0.35);
+      const lateral=(value.x-torsoX)*side,minX=Math.max(size.x*minLateral,size.y*0.025);
+      if(lateral<minX)value.x=torsoX+side*minX;
+      value.y=THREE.MathUtils.clamp(value.y,reference.y-size.y*0.12,reference.y+size.y*0.06);
+      return value;
+    };
+    const fittedShoulder=refine(shoulder,`${prefix}Shoulder`,0.08);
+    const fittedElbow=refine(elbow,`${prefix}Elbow`,0.25);
+    const fittedWrist=refine(wrist,`${prefix}Wrist`,0.38);
+    return {shoulder:fittedShoulder,upperArm:fittedShoulder.clone().lerp(fittedElbow,0.52),elbow:fittedElbow,wrist:fittedWrist};
+  };
+  const leftArm=refineMobileArm(1,'Left',leftShoulder,leftElbow,leftWrist);
+  const rightArm=refineMobileArm(-1,'Right',rightShoulder,rightElbow,rightWrist);
   const positions=new Map([
     ['hip',hip],['supine',hip.clone().lerp(chest,0.36)],['chest',chest],
     ['neck',chest.clone().lerp(nose,0.62)],['head',nose.clone().add(new THREE.Vector3(0,size.y*0.025,0))],
-    ['LeftShoulder',leftShoulder],['LeftUpperArm',leftShoulder.clone().lerp(leftElbow,0.52)],['LeftElbow',leftElbow],['LeftWrist',leftWrist],
-    ['RightShoulder',rightShoulder],['RightUpperArm',rightShoulder.clone().lerp(rightElbow,0.52)],['RightElbow',rightElbow],['RightWrist',rightWrist],
+    ['LeftShoulder',leftArm.shoulder],['LeftUpperArm',leftArm.upperArm],['LeftElbow',leftArm.elbow],['LeftWrist',leftArm.wrist],
+    ['RightShoulder',rightArm.shoulder],['RightUpperArm',rightArm.upperArm],['RightElbow',rightArm.elbow],['RightWrist',rightArm.wrist],
     ['LeftUpperLeg',leftHip],['LeftKnee',leftKnee],['LeftAnkle',leftAnkle],
     ['RightUpperLeg',rightHip],['RightKnee',rightKnee],['RightAnkle',rightAnkle]
   ]);

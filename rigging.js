@@ -83,6 +83,8 @@ const markerGroup = new THREE.Group();
 scene.add(markerGroup);
 const protectedOverlayGroup = new THREE.Group();
 scene.add(protectedOverlayGroup);
+const weightPaintOverlayGroup = new THREE.Group();
+scene.add(weightPaintOverlayGroup);
 const regionTransform = new TransformControls(camera, renderer.domElement);
 regionTransform.setSpace('local');
 regionTransform.setSize(0.8);
@@ -207,6 +209,7 @@ function revokeOldModel() {
   releaseModelResources = null;
   markerGroup.clear();
   for(const child of [...protectedOverlayGroup.children]){protectedOverlayGroup.remove(child);child.geometry?.dispose();child.material?.dispose();}
+  for(const child of [...weightPaintOverlayGroup.children]){weightPaintOverlayGroup.remove(child);child.geometry?.dispose();child.material?.dispose();}
   if (rigLines) { scene.remove(rigLines); rigLines.geometry.dispose(); rigLines.material.dispose(); rigLines = null; }
   modelRoot = null;
   modelEntries = [];
@@ -657,6 +660,43 @@ function paintGeneratedWeights(clientX,clientY){
   return changed;
 }
 
+function refreshWeightPaintOverlay(){
+  for(const child of [...weightPaintOverlayGroup.children]){weightPaintOverlayGroup.remove(child);child.geometry?.dispose();child.material?.dispose();}
+  if(!weightPaintMode||!generatedRig)return;
+  modelRoot.updateMatrixWorld(true);
+  const selectedBone=BONE_DEFS.findIndex(bone=>bone.name===weightPaintBone.value);if(selectedBone<0)return;
+  const repainted=new Map();
+  const includeStroke=stroke=>{for(const [entry,vertices] of stroke||[]){let set=repainted.get(entry);if(!set){set=new Set();repainted.set(entry,set);}for(const vertex of vertices.keys())set.add(vertex);}};
+  for(const stroke of weightPaintUndoStack)includeStroke(stroke);
+  includeStroke(activeWeightStroke);
+  const diagonal=modelLocalBounds().getSize(new THREE.Vector3()).length();
+  const pointSize=Math.max(diagonal*0.007,0.004);
+  const vertexPosition=new THREE.Vector3();
+  for(const entry of modelEntries){
+    const mesh=entry.generated;if(!mesh)continue;
+    const geometry=mesh.geometry,index=geometry.getAttribute('skinIndex'),weight=geometry.getAttribute('skinWeight');
+    const touched=repainted.get(entry)||new Set(),influencePositions=[],influenceColors=[],paintedPositions=[];
+    for(let vertex=0;vertex<index.count;vertex++){
+      mesh.localToWorld(vertexPosition.fromBufferAttribute(geometry.getAttribute('position'),vertex));
+      if(touched.has(vertex)){paintedPositions.push(vertexPosition.x,vertexPosition.y,vertexPosition.z);continue;}
+      let current=0;const offset=vertex*4;
+      for(let slot=0;slot<4;slot++)if(index.array[offset+slot]===selectedBone)current+=weight.array[offset+slot];
+      if(current<0.05)continue;
+      influencePositions.push(vertexPosition.x,vertexPosition.y,vertexPosition.z);
+      const shade=Math.min(1,current);
+      influenceColors.push(1,0.18+0.55*(1-shade),0.04+0.08*(1-shade));
+    }
+    if(influencePositions.length){
+      const pointsGeometry=new THREE.BufferGeometry();pointsGeometry.setAttribute('position',new THREE.Float32BufferAttribute(influencePositions,3));pointsGeometry.setAttribute('color',new THREE.Float32BufferAttribute(influenceColors,3));
+      const points=new THREE.Points(pointsGeometry,new THREE.PointsMaterial({size:pointSize,sizeAttenuation:true,vertexColors:true,depthTest:false,transparent:true,opacity:0.85}));points.renderOrder=30;weightPaintOverlayGroup.add(points);
+    }
+    if(paintedPositions.length){
+      const pointsGeometry=new THREE.BufferGeometry();pointsGeometry.setAttribute('position',new THREE.Float32BufferAttribute(paintedPositions,3));
+      const points=new THREE.Points(pointsGeometry,new THREE.PointsMaterial({color:0x42e8ff,size:pointSize*1.25,sizeAttenuation:true,depthTest:false,transparent:true,opacity:1}));points.renderOrder=31;weightPaintOverlayGroup.add(points);
+    }
+  }
+}
+
 function setWeightPaintMode(enabled){
   weightPaintMode=Boolean(enabled&&generatedRig&&modelEntries.some(entry=>entry.generated));
   if(weightPaintMode){
@@ -669,6 +709,7 @@ function setWeightPaintMode(enabled){
   weightPaintToggle.style.background=weightPaintMode?'#79421e':'';
   viewHelp.textContent=weightPaintMode?'モデル表面をドラッグしてウェイトを塗ります。操作をOFFにすると視点を回せます。':'ドラッグで視点を回転できます。';
   pointerStart=null;activeWeightStroke=null;
+  refreshWeightPaintOverlay();
 }
 
 function finishWeightPaintStroke(){
@@ -677,7 +718,7 @@ function finishWeightPaintStroke(){
     let count=0;for(const vertices of activeWeightStroke.values())count+=vertices.size;
     setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'選択ボーン'}のウェイトを${count.toLocaleString()}頂点塗り直しました。必要なら直前の塗りを戻せます。`);
   }
-  activeWeightStroke=null;refreshWeightPaintControls();
+  activeWeightStroke=null;refreshWeightPaintControls();refreshWeightPaintOverlay();
 }
 
 function undoWeightPaint(){
@@ -688,7 +729,7 @@ function undoWeightPaint(){
     for(const [vertex,snapshot] of vertices){const offset=vertex*4;for(let slot=0;slot<4;slot++){index.array[offset+slot]=snapshot.indices[slot];weight.array[offset+slot]=snapshot.weights[slot];}}
     index.needsUpdate=true;weight.needsUpdate=true;entry.generated.computeBoundingSphere();
   }
-  refreshWeightPaintControls();setStatus('直前のウェイト塗りを元に戻しました。');
+  refreshWeightPaintControls();refreshWeightPaintOverlay();setStatus('直前のウェイト塗りを元に戻しました。');
 }
 
 function setProtectMode(enabled) {
@@ -711,7 +752,7 @@ weightPaintToggle.addEventListener('click',()=>setWeightPaintMode(!weightPaintMo
 weightPaintUndo.addEventListener('click',undoWeightPaint);
 weightPaintRadius.addEventListener('input',()=>weightPaintRadiusValue.textContent=`${Number(weightPaintRadius.value).toFixed(1)}%`);
 weightPaintStrength.addEventListener('input',()=>weightPaintStrengthValue.textContent=`${Number(weightPaintStrength.value)}%`);
-weightPaintBone.addEventListener('change',()=>setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'ボーン'}のウェイトを塗る設定です。`));
+weightPaintBone.addEventListener('change',()=>{refreshWeightPaintOverlay();setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'ボーン'}のウェイトを塗る設定です。`);});
 
 function positionInsideFromSurface(bone) {
   if(!bone.surfacePoint||!bone.surfaceNormal)return;
@@ -1151,6 +1192,7 @@ async function generateRigAndWeights(){
     const unifiedSeams=weighting.unifyAdjacentMeshSeamWeights(modelEntries,BONE_DEFS.length,rootSize);
     exportButton.disabled=false;
     refreshWeightPaintControls();
+    refreshWeightPaintOverlay();
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
     const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
     const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個はメモリ保護のため表面平滑化を省きました。`:'';

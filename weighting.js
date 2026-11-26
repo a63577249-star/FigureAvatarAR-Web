@@ -521,6 +521,52 @@ function unifyAdjacentMeshSeamWeights(entries,boneCount,rootSize){
     }
     seamCount++;
   }
+  // Final ownership pass after seam averaging. Seam welding can reintroduce
+  // arm weights into nearby head, torso, or skirt vertices, so sanitize the
+  // exported attributes using the same body-relative bone-distance test.
+  const bounds=modelLocalBounds(),extent=bounds.getSize(new THREE.Vector3()),height=Math.max(extent.y,1e-6);
+  const indexByName=new Map(BONE_DEFS.map((bone,index)=>[bone.name,index]));
+  const armIndices=new Set(BONE_DEFS.map((bone,index)=>/^(Left|Right)(Shoulder|UpperArm|Elbow|Wrist)$/.test(bone.name)?index:-1).filter(index=>index>=0));
+  const links=BONE_DEFS.filter(bone=>bone.parent&&indexByName.has(bone.parent)).map(bone=>({name:bone.name,a:BONE_DEFS[indexByName.get(bone.parent)].position,b:bone.position}));
+  const armLinks=links.filter(link=>/^(Left|Right)(Shoulder|UpperArm|Elbow|Wrist)$/.test(link.name));
+  const coreLinks=links.filter(link=>['supine','chest','neck'].includes(link.name));
+  const legLinks=links.filter(link=>/^(Left|Right)(UpperLeg|Knee|Ankle)$/.test(link.name));
+  const headBone=BONE_DEFS.find(bone=>bone.name==='head'),hipY=BONE_DEFS.find(bone=>bone.name==='hip')?.position?.y??bounds.min.y+height*0.46;
+  const distanceToLinks=(x,y,z,list)=>{
+    let best=Infinity;
+    for(const link of list){
+      const dx=link.b.x-link.a.x,dy=link.b.y-link.a.y,dz=link.b.z-link.a.z,lengthSq=dx*dx+dy*dy+dz*dz;
+      const t=lengthSq>1e-12?THREE.MathUtils.clamp(((x-link.a.x)*dx+(y-link.a.y)*dy+(z-link.a.z)*dz)/lengthSq,0,1):0;
+      best=Math.min(best,Math.hypot(x-(link.a.x+dx*t),y-(link.a.y+dy*t),z-(link.a.z+dz*t)));
+    }
+    return best;
+  };
+  for(const entry of entries){
+    if(!entry.generated)continue;
+    const geometry=entry.generated.geometry,index=geometry.getAttribute('skinIndex'),weight=geometry.getAttribute('skinWeight'),positions=entry.rootPositions;
+    for(let vertex=0;vertex<positions.length/3;vertex++){
+      if(protectedVertices.get(entry)?.has(vertex))continue;
+      const x=positions[vertex*3],y=positions[vertex*3+1],z=positions[vertex*3+2];
+      const armDistance=distanceToLinks(x,y,z,armLinks),coreDistance=distanceToLinks(x,y,z,coreLinks),legDistance=distanceToLinks(x,y,z,legLinks);
+      const headDistance=headBone?Math.hypot(x-headBone.position.x,y-headBone.position.y,z-headBone.position.z):Infinity;
+      const headZone=(y>=bounds.min.y+height*0.70||headDistance<=height*0.24)
+        &&headDistance<=armDistance+height*0.07;
+      const torsoOwns=coreDistance+height*0.045<armDistance;
+      const legOwns=y<hipY+height*0.07&&legDistance+height*0.045<armDistance;
+      if(!headZone&&!torsoOwns&&!legOwns)continue;
+      let sum=0;
+      for(let slot=0;slot<4;slot++){
+        const at=vertex*4+slot;
+        if(armIndices.has(index.array[at]))weight.array[at]=0;
+        sum+=weight.array[at];
+      }
+      if(sum<=1e-8){
+        const fallback=headZone?indexByName.get('head'):legOwns?indexByName.get('hip'):indexByName.get('chest');
+        for(let slot=0;slot<4;slot++){index.array[vertex*4+slot]=slot===0?fallback:0;weight.array[vertex*4+slot]=slot===0?1:0;}
+      }else for(let slot=0;slot<4;slot++)weight.array[vertex*4+slot]/=sum;
+    }
+    index.needsUpdate=true;weight.needsUpdate=true;
+  }
   return seamCount;
 }
   return {generateMeshWeights,unifyAdjacentMeshSeamWeights};

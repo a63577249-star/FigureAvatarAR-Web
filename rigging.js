@@ -6,7 +6,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-anatomical-proportions-20261126';
-import { createWeightingTools } from './weighting.js?v=weighting-arm-neighbor-spread-20261126';
+import { createWeightingTools } from './weighting.js?v=weighting-sleeve-surface-labels-20261126';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
@@ -793,9 +793,22 @@ async function getMobilePoseLandmarker(){
   return mobilePoseTaskPromise;
 }
 
+function placeMobileFallbackRig(){
+  const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
+  const h=Math.max(size.y,0.001),w=Math.max(size.x,0.001);
+  const y=ratio=>bounds.min.y+h*ratio,x=ratio=>center.x+w*ratio;
+  const set=(name,px,py)=>{const bone=boneByName(name);bone.position.set(px,py,center.z);};
+  set('hip',center.x,y(.48));set('supine',center.x,y(.61));set('chest',center.x,y(.73));set('neck',center.x,y(.85));set('head',center.x,y(.90));
+  for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
+    set(prefix+'Shoulder',x(side*.17),y(.77));set(prefix+'UpperArm',x(side*.28),y(.74));
+    set(prefix+'Elbow',x(side*.39),y(.71));set(prefix+'Wrist',x(side*.49),y(.68));
+    set(prefix+'UpperLeg',x(side*.09),y(.45));set(prefix+'Knee',x(side*.10),y(.25));set(prefix+'Ankle',x(side*.10),y(.06));
+  }
+}
+
 async function estimateMobileTemplateRig(){
   restoreTemplateBoneDefs();
-  placeStandardRig();
+  placeMobileFallbackRig();
   const fallback=new Map(BONE_DEFS.map(bone=>[bone.name,bone.position.clone()]));
   setStatus('スマホ向け軽量AI（Pose Lite）を準備しています…初回は数MBを取得します。');
   const landmarker=await getMobilePoseLandmarker();

@@ -36,7 +36,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurf
     const verticalPaddingUp=Math.max(rootSize*0.07,extent.y*0.035);
     const lateralLimit=Math.max(rootSize*0.045,extent.x*0.09);
     const seedRadius=Math.max(rootSize*0.17,extent.y*0.095);
-    const shoulderSeedRadius=Math.max(rootSize*0.28,extent.y*0.15);
+    const shoulderSeedRadius=Math.max(rootSize*0.25,extent.y*0.14);
     const corridorRadius=Math.max(rootSize*0.22,extent.y*0.12);
     const mask=new Uint8Array(count);
     for(let vertex=0;vertex<count;vertex++){
@@ -44,8 +44,8 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurf
       const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
       const component=graph?.componentIds?.[vertex];
       const isSleeveComponent=component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
-      const allowedDown=isSleeveComponent?Math.max(rootSize*0.28,extent.y*0.13):verticalPaddingDown;
-      const allowedRadius=isSleeveComponent?Math.max(rootSize*0.30,extent.y*0.16):corridorRadius;
+      const allowedDown=isSleeveComponent?Math.max(rootSize*0.40,extent.y*0.20):verticalPaddingDown;
+      const allowedRadius=isSleeveComponent?Math.max(rootSize*0.36,extent.y*0.19):corridorRadius;
       // Kimono-like sleeves can hang well below the elbow when the arm is
       // raised. Extend the corridor downward more than upward so the hanging
       // hem follows the connected sleeve without reaching hats or hair.
@@ -85,7 +85,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurf
       // least as close as the core, so hats and bodice surfaces stay untouched.
       const coreClearance=rootSize*(shoulderRootSeed?0.12:0.025);
       if(nearest<=nearestCore+coreClearance){
-        const amount=(shoulderRootSeed?0.86:0.72)*Math.exp(-0.5*(nearest/activeSeedRadius)**2),offset=vertex*boneCount;
+        const amount=(shoulderRootSeed?0.68:0.72)*Math.exp(-0.5*(nearest/activeSeedRadius)**2),offset=vertex*boneCount;
         for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-amount);
         dense[offset+nearestSegment.a]+=amount*(1-nearestT);
         dense[offset+nearestSegment.b]+=amount*nearestT;
@@ -103,7 +103,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurf
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.30,sigma=Math.max(rootSize*0.16,1e-5),spreadScale=0.64;
+  const maxDistance=rootSize*0.38,sigma=Math.max(rootSize*0.20,1e-5),spreadScale=0.66;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
@@ -355,23 +355,28 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   }
   // Reapply a compact shoulder patch after surface smoothing so the shoulder
   // seam cannot be averaged back into the chest weights.
-  const shoulderPatchRadius=Math.max(rootSize*0.12,modelExtent.y*0.12);
+  const shoulderPatchRadius=Math.max(rootSize*0.11,modelExtent.y*0.11);
   const armBoneIndices=new Set(BONE_DEFS.map((bone,index)=>/^(Left|Right)(Shoulder|UpperArm|Elbow|Wrist)$/.test(bone.name)?index:-1).filter(index=>index>=0));
   const hipY=BONE_DEFS.find(bone=>bone.name==='hip')?.position?.y??modelBounds.min.y+modelExtent.y*0.46;
-  const lowerBodyArmClearance=Math.max(rootSize*0.04,modelExtent.y*0.035);
-  const hipIndex=indexByName.get('hip')??0;
+  const lowerBodyArmClearance=Math.max(rootSize*0.055,modelExtent.y*0.05);
+  const lowerBodyCoreMargin=Math.max(rootSize*0.025,modelExtent.y*0.02);
   for(let v=0;v<count;v++){
     const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2],offset=v*boneCount;
-    const component=diffusionGraph?.componentIds?.[v];
-    const isSleeveComponent=component!=null&&component>=0&&armSurfaceComponents?.[component]===1;
-    if(!isSleeveComponent&&py<hipY-modelExtent.y*0.035){
-      let nearestArm=Infinity;
+    if(py<hipY-modelExtent.y*0.035){
+      let nearestArm=Infinity,nearestCore=Infinity;
       for(const segment of segmentData)if(segment.isArmInfluence){
         const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
         const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
         nearestArm=Math.min(nearestArm,Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t)));
       }
-      if(nearestArm>lowerBodyArmClearance){
+      for(const segment of segmentData)if(segment.isCore){
+        const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
+        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+        nearestCore=Math.min(nearestCore,Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t)));
+      }
+      // Keep a hanging sleeve tip when it remains closer to the arm than the
+      // torso, but remove arm weights from lower-body fabric near the core.
+      if(nearestArm>lowerBodyArmClearance&&nearestArm>nearestCore+lowerBodyCoreMargin){
         for(const boneIndex of armBoneIndices)dense[offset+boneIndex]=0;
         normalizeWeights(dense,offset,boneCount);
       }
@@ -383,10 +388,10 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       if((px-modelCenter.x)*side<shoulderLateral*0.42)continue;
       const distance=Math.hypot(px-shoulder.bx,py-shoulder.by,pz-shoulder.bz);
       if(distance>=shoulderPatchRadius)continue;
-      const blend=0.62*(1-distance/shoulderPatchRadius)**1.35,shoulderBone=shoulder.b,upperArmBone=upperArm.b;
+      const blend=0.42*(1-distance/shoulderPatchRadius)**1.35,shoulderBone=shoulder.b,upperArmBone=upperArm.b;
       for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-blend);
-      dense[offset+shoulderBone]+=blend*0.68;
-      dense[offset+upperArmBone]+=blend*0.32;
+      dense[offset+shoulderBone]+=blend*0.62;
+      dense[offset+upperArmBone]+=blend*0.38;
       normalizeWeights(dense,offset,boneCount);
     }
   }

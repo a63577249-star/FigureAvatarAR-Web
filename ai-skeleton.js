@@ -408,9 +408,9 @@ function fitAiPredictionToBasic19(candidates){
   // Accessory bounds can be wider than the body, so estimate the arm endpoint
   // from vertices in the upper-body band and cap it by body height.
   const armReachLimit=Math.min(width*0.49,height*0.38);
-  const legSpacing=Math.min(width*0.09,height*0.075);
+  const legSpacing=Math.min(width*0.09,height*0.04);
   const estimateArmEndpoint=side=>{
-    let farthest=height*0.12,endpointY=y(0.68);
+    let farthest=height*0.12,endpointY=y(0.54);
     for(const entry of getModelEntries()){
       const positions=entry.rootPositions;if(!positions)continue;
       const count=positions.length/3,step=Math.max(1,Math.ceil(count/80000));
@@ -422,27 +422,27 @@ function fitAiPredictionToBasic19(candidates){
       }
     }
     const reach=Math.min(farthest,armReachLimit);
-    return {x:center.x+side*reach*0.94,y:y(0.73)+(endpointY-y(0.73))*0.90};
+    return {x:center.x+side*reach*0.94,y:y(0.68)+(endpointY-y(0.68))*0.90};
   };
   const targetByName=new Map([
-    ['hip',new THREE.Vector3(center.x,y(.48),center.z)],
-    ['supine',new THREE.Vector3(center.x,y(.61),center.z)],
-    ['chest',new THREE.Vector3(center.x,y(.73),center.z)],
-    ['neck',new THREE.Vector3(center.x,y(.85),center.z)],
-    ['head',new THREE.Vector3(center.x,y(.90),center.z)]
+    ['hip',new THREE.Vector3(center.x,y(.46),center.z)],
+    ['supine',new THREE.Vector3(center.x,y(.54),center.z)],
+    ['chest',new THREE.Vector3(center.x,y(.62),center.z)],
+    ['neck',new THREE.Vector3(center.x,y(.70),center.z)],
+    ['head',new THREE.Vector3(center.x,y(.78),center.z)]
   ]);
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
-    const shoulderOffset=Math.min(width*0.16,height*0.13);
-    const shoulder=new THREE.Vector3(center.x+side*shoulderOffset,y(.73),center.z);
+    const shoulderOffset=Math.min(width*0.16,height*0.075);
+    const shoulder=new THREE.Vector3(center.x+side*shoulderOffset,y(.68),center.z);
     const endpoint=estimateArmEndpoint(side);
     const wrist=new THREE.Vector3(endpoint.x,endpoint.y,center.z);
     targetByName.set(`${prefix}Shoulder`,shoulder);
     targetByName.set(`${prefix}UpperArm`,shoulder.clone().lerp(wrist,0.34));
     targetByName.set(`${prefix}Elbow`,shoulder.clone().lerp(wrist,0.68));
     targetByName.set(`${prefix}Wrist`,wrist);
-    targetByName.set(`${prefix}UpperLeg`,new THREE.Vector3(center.x+side*legSpacing,y(.45),center.z));
-    targetByName.set(`${prefix}Knee`,new THREE.Vector3(center.x+side*legSpacing,y(.25),center.z));
-    targetByName.set(`${prefix}Ankle`,new THREE.Vector3(center.x+side*legSpacing,y(.06),center.z));
+    targetByName.set(`${prefix}UpperLeg`,new THREE.Vector3(center.x+side*legSpacing,y(.40),center.z));
+    targetByName.set(`${prefix}Knee`,new THREE.Vector3(center.x+side*legSpacing,y(.18),center.z));
+    targetByName.set(`${prefix}Ankle`,new THREE.Vector3(center.x+side*legSpacing,y(.03),center.z));
   }
   const bones=TEMPLATE_BONES.map(bone=>({...bone,position:null,surfacePoint:null,surfaceNormal:null,bone:null,marker:null}));
   const assignments=new Array(bones.length).fill(-1),usedCandidates=new Set(),pairs=[];

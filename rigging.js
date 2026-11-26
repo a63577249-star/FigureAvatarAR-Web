@@ -5,7 +5,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-head-position-20261126';
+import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-anatomical-proportions-20261126';
 import { createWeightingTools } from './weighting.js?v=weighting-module-20261126';
 
 const BONE_DEFS = [
@@ -474,21 +474,21 @@ function placeStandardRig() {
   const center = box.getCenter(new THREE.Vector3());
   const h = Math.max(size.y,0.001), w = Math.max(size.x,0.001);
   const y = ratio => box.min.y + h*ratio;
-  const x = ratio => center.x + w*ratio;
   const at = (name, px, py, pz= center.z) => {
     const bone=boneByName(name);
     bone.position=new THREE.Vector3(px,py,pz);
     bone.surfacePoint=null;bone.surfaceNormal=null;
   };
-  at('hip',center.x,y(.48)); at('supine',center.x,y(.61)); at('chest',center.x,y(.73)); at('neck',center.x,y(.85)); at('head',center.x,y(.90));
+  at('hip',center.x,y(.46)); at('supine',center.x,y(.54)); at('chest',center.x,y(.62)); at('neck',center.x,y(.70)); at('head',center.x,y(.78));
+  const armReach=Math.min(w*0.49,h*0.36),shoulderOffset=Math.min(w*0.16,h*0.075),legSpacing=Math.min(w*0.09,h*0.04);
   for (const [side,prefix] of [[1,'Left'],[-1,'Right']]) {
-    at(prefix+'Shoulder',x(side*.17),y(.77));
-    at(prefix+'UpperArm',x(side*.28),y(.74));
-    at(prefix+'Elbow',x(side*.39),y(.71));
-    at(prefix+'Wrist',x(side*.49),y(.68));
-    at(prefix+'UpperLeg',x(side*.09),y(.45));
-    at(prefix+'Knee',x(side*.10),y(.25));
-    at(prefix+'Ankle',x(side*.10),y(.06));
+    at(prefix+'Shoulder',center.x+side*shoulderOffset,y(.68));
+    at(prefix+'UpperArm',center.x+side*armReach*.55,y(.63));
+    at(prefix+'Elbow',center.x+side*armReach*.78,y(.58));
+    at(prefix+'Wrist',center.x+side*armReach,y(.54));
+    at(prefix+'UpperLeg',center.x+side*legSpacing,y(.40));
+    at(prefix+'Knee',center.x+side*legSpacing,y(.18));
+    at(prefix+'Ankle',center.x+side*legSpacing,y(.03));
   }
   updateMarkers();
   renderBoneList();

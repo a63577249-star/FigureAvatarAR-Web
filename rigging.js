@@ -798,11 +798,13 @@ function placeMobileFallbackRig(){
   const h=Math.max(size.y,0.001),w=Math.max(size.x,0.001);
   const y=ratio=>bounds.min.y+h*ratio,x=ratio=>center.x+w*ratio;
   const set=(name,px,py)=>{const bone=boneByName(name);bone.position=new THREE.Vector3(px,py,center.z);};
-  set('hip',center.x,y(.48));set('supine',center.x,y(.61));set('chest',center.x,y(.73));set('neck',center.x,y(.85));set('head',center.x,y(.90));
+  // Keep mobile fallback at the same body-relative heights as the standard
+  // 19-joint rig; the previous elevated values pulled the whole chain upward.
+  set('hip',center.x,y(.46));set('supine',center.x,y(.54));set('chest',center.x,y(.62));set('neck',center.x,y(.70));set('head',center.x,y(.78));
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
-    set(prefix+'Shoulder',x(side*.17),y(.77));set(prefix+'UpperArm',x(side*.28),y(.74));
-    set(prefix+'Elbow',x(side*.39),y(.71));set(prefix+'Wrist',x(side*.49),y(.68));
-    set(prefix+'UpperLeg',x(side*.09),y(.45));set(prefix+'Knee',x(side*.10),y(.25));set(prefix+'Ankle',x(side*.10),y(.06));
+    set(prefix+'Shoulder',x(side*.16),y(.68));set(prefix+'UpperArm',x(side*.28),y(.63));
+    set(prefix+'Elbow',x(side*.39),y(.58));set(prefix+'Wrist',x(side*.49),y(.54));
+    set(prefix+'UpperLeg',x(side*.09),y(.40));set(prefix+'Knee',x(side*.10),y(.18));set(prefix+'Ankle',x(side*.10),y(.03));
   }
 }
 
@@ -870,10 +872,10 @@ async function estimateMobileTemplateRig(){
   const refineMobileArm=(side,prefix,shoulder,elbow,wrist)=>{
     const torsoX=fallback.get('chest').x;
     const refine=(point,name,minLateral)=>{
-      const reference=fallback.get(name),value=point.clone().lerp(reference,0.35);
+      const reference=fallback.get(name),value=point.clone().lerp(reference,0.5);
       const lateral=(value.x-torsoX)*side,minX=Math.max(size.x*minLateral,size.y*0.025);
       if(lateral<minX)value.x=torsoX+side*minX;
-      value.y=THREE.MathUtils.clamp(value.y,reference.y-size.y*0.12,reference.y+size.y*0.06);
+      value.y=THREE.MathUtils.clamp(value.y,reference.y-size.y*0.12,reference.y+size.y*0.02);
       return value;
     };
     const fittedShoulder=refine(shoulder,`${prefix}Shoulder`,0.08);

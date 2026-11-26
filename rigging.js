@@ -5,15 +5,15 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-anatomical-proportions-20261126';
+import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-arm-joint-placement-20261126';
 import { createWeightingTools } from './weighting.js?v=weighting-final-shoulder-patch-lowerbody-guard-20261126k';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
   ['neck','首','chest'], ['head','頭','neck'],
-  ['LeftShoulder','左肩','chest'], ['LeftUpperArm','左上腕','LeftShoulder'],
+  ['LeftShoulder','左肩','chest'], ['LeftUpperArm','左上腕（肩〜ひじ）','LeftShoulder'],
   ['LeftElbow','左ひじ','LeftUpperArm'], ['LeftWrist','左手首','LeftElbow'],
-  ['RightShoulder','右肩','chest'], ['RightUpperArm','右上腕','RightShoulder'],
+  ['RightShoulder','右肩','chest'], ['RightUpperArm','右上腕（肩〜ひじ）','RightShoulder'],
   ['RightElbow','右ひじ','RightUpperArm'], ['RightWrist','右手首','RightElbow'],
   ['LeftUpperLeg','左脚','hip'], ['LeftKnee','左ひざ','LeftUpperLeg'], ['LeftAnkle','左足首','LeftKnee'],
   ['RightUpperLeg','右脚','hip'], ['RightKnee','右ひざ','RightUpperLeg'], ['RightAnkle','右足首','RightKnee']
@@ -510,10 +510,15 @@ function placeStandardRig() {
   at('hip',center.x,y(.46)); at('supine',center.x,y(.54)); at('chest',center.x,y(.62)); at('neck',center.x,y(.70)); at('head',center.x,y(.78));
   const armReach=Math.min(w*0.49,h*0.36),shoulderOffset=Math.min(w*0.16,h*0.075),legSpacing=Math.min(w*0.09,h*0.04);
   for (const [side,prefix] of [[1,'Left'],[-1,'Right']]) {
-    at(prefix+'Shoulder',center.x+side*shoulderOffset,y(.68));
-    at(prefix+'UpperArm',center.x+side*armReach*.55,y(.63));
-    at(prefix+'Elbow',center.x+side*armReach*.78,y(.58));
-    at(prefix+'Wrist',center.x+side*armReach,y(.54));
+    const shoulder=new THREE.Vector3(center.x+side*shoulderOffset,y(.68),center.z);
+    const wrist=new THREE.Vector3(center.x+side*armReach,y(.54),center.z);
+    at(prefix+'Shoulder',shoulder.x,shoulder.y,shoulder.z);
+    // Keep the elbow at about 62% of the shoulder-to-wrist span. The old
+    // 78% placement put the elbow down the forearm on short or broad models.
+    boneByName(prefix+'UpperArm').position=shoulder.clone().lerp(wrist,0.30);
+    const elbow=shoulder.clone().lerp(wrist,0.62);
+    at(prefix+'Elbow',elbow.x,elbow.y,elbow.z);
+    at(prefix+'Wrist',wrist.x,wrist.y,wrist.z);
     at(prefix+'UpperLeg',center.x+side*legSpacing,y(.40));
     at(prefix+'Knee',center.x+side*legSpacing,y(.18));
     at(prefix+'Ankle',center.x+side*legSpacing,y(.03));
@@ -977,10 +982,12 @@ function placeMobileFallbackRig(){
   // 19-joint rig; the previous elevated values pulled the whole chain upward.
   set('hip',center.x,y(.46));set('supine',center.x,y(.54));set('chest',center.x,y(.62));set('neck',center.x,y(.70));set('head',center.x,y(.78));
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
-    set(prefix+'Shoulder',center.x+side*shoulderOffset,y(.68));
-    set(prefix+'UpperArm',center.x+side*armReach*.55,y(.63));
-    set(prefix+'Elbow',center.x+side*armReach*.78,y(.58));
-    set(prefix+'Wrist',center.x+side*armReach,y(.54));
+    const shoulder=new THREE.Vector3(center.x+side*shoulderOffset,y(.68),center.z);
+    const wrist=new THREE.Vector3(center.x+side*armReach,y(.54),center.z);
+    boneByName(prefix+'Shoulder').position=shoulder;
+    boneByName(prefix+'UpperArm').position=shoulder.clone().lerp(wrist,0.30);
+    boneByName(prefix+'Elbow').position=shoulder.clone().lerp(wrist,0.62);
+    boneByName(prefix+'Wrist').position=wrist;
     set(prefix+'UpperLeg',center.x+side*legSpacing,y(.40));
     set(prefix+'Knee',center.x+side*legSpacing,y(.18));
     set(prefix+'Ankle',center.x+side*legSpacing,y(.03));

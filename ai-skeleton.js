@@ -429,7 +429,7 @@ function fitAiPredictionToBasic19(candidates){
     ['supine',new THREE.Vector3(center.x,y(.61),center.z)],
     ['chest',new THREE.Vector3(center.x,y(.73),center.z)],
     ['neck',new THREE.Vector3(center.x,y(.85),center.z)],
-    ['head',new THREE.Vector3(center.x,y(.94),center.z)]
+    ['head',new THREE.Vector3(center.x,y(.90),center.z)]
   ]);
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
     const shoulderOffset=Math.min(width*0.16,height*0.13);

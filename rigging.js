@@ -5,7 +5,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-skeleton-arm-direction-20261126';
+import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-head-position-20261126';
 import { createWeightingTools } from './weighting.js?v=weighting-module-20261126';
 
 const BONE_DEFS = [
@@ -480,7 +480,7 @@ function placeStandardRig() {
     bone.position=new THREE.Vector3(px,py,pz);
     bone.surfacePoint=null;bone.surfaceNormal=null;
   };
-  at('hip',center.x,y(.48)); at('supine',center.x,y(.61)); at('chest',center.x,y(.73)); at('neck',center.x,y(.85)); at('head',center.x,y(.94));
+  at('hip',center.x,y(.48)); at('supine',center.x,y(.61)); at('chest',center.x,y(.73)); at('neck',center.x,y(.85)); at('head',center.x,y(.90));
   for (const [side,prefix] of [[1,'Left'],[-1,'Right']]) {
     at(prefix+'Shoulder',x(side*.17),y(.77));
     at(prefix+'UpperArm',x(side*.28),y(.74));

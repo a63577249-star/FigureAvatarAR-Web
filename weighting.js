@@ -317,25 +317,6 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;
     }
-    // Give the garment immediately around each shoulder joint a local shoulder
-    // blend directly. This avoids relying on the nearest-segment tie-break at
-    // the armpit, while the compact radius keeps the skirt outside the field.
-    if(!isHeadRegion&&!isFootRegion){
-      for(const sideName of ['Left','Right']){
-        const shoulder=shoulderSegments.get(`${sideName}Shoulder`);
-        const upperArm=upperArmSegments.get(`${sideName}UpperArm`);
-        if(!shoulder||!upperArm)continue;
-        const distance=Math.hypot(px-shoulder.bx,py-shoulder.by,pz-shoulder.bz);
-        const radius=Math.max(rootSize*0.085,modelExtent.y*0.095);
-        if(distance>=radius)continue;
-        const shoulderBone=shoulder.b,upperArmBone=upperArm.b;
-        const blend=0.78*(1-distance/radius)**2;
-        for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-blend);
-        dense[offset+shoulderBone]+=blend*0.72;
-        dense[offset+upperArmBone]+=blend*0.28;
-        allowedInfluences[offset+shoulderBone]=1;allowedInfluences[offset+upperArmBone]=1;
-      }
-    }
     normalizeWeights(dense,offset,boneCount);
   }
 
@@ -367,6 +348,41 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       for(const v of group)normalizeWeights(next,v*boneCount,boneCount);
     }
     [dense,next]=[next,dense];
+  }
+  // Reapply a compact shoulder patch after surface smoothing so the shoulder
+  // seam cannot be averaged back into the chest weights.
+  const shoulderPatchRadius=Math.max(rootSize*0.14,modelExtent.y*0.14);
+  const armBoneIndices=new Set(BONE_DEFS.map((bone,index)=>/^(Left|Right)(Shoulder|UpperArm|Elbow|Wrist)$/.test(bone.name)?index:-1).filter(index=>index>=0));
+  const hipY=BONE_DEFS.find(bone=>bone.name==='hip')?.position?.y??modelBounds.min.y+modelExtent.y*0.46;
+  const lowerBodyArmClearance=Math.max(rootSize*0.04,modelExtent.y*0.035);
+  const hipIndex=indexByName.get('hip')??0;
+  for(let v=0;v<count;v++){
+    const px=rootVertices[v*3],py=rootVertices[v*3+1],pz=rootVertices[v*3+2],offset=v*boneCount;
+    if(py<hipY-modelExtent.y*0.035){
+      let nearestArm=Infinity;
+      for(const segment of segmentData)if(segment.isArmInfluence){
+        const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
+        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+        nearestArm=Math.min(nearestArm,Math.hypot(px-(segment.ax+segment.abx*t),py-(segment.ay+segment.aby*t),pz-(segment.az+segment.abz*t)));
+      }
+      if(nearestArm>lowerBodyArmClearance){
+        for(const boneIndex of armBoneIndices)dense[offset+boneIndex]=0;
+        normalizeWeights(dense,offset,boneCount);
+      }
+    }
+    for(const sideName of ['Left','Right']){
+      const side=sideName==='Left'?1:-1,shoulder=shoulderSegments.get(`${sideName}Shoulder`),upperArm=upperArmSegments.get(`${sideName}UpperArm`);
+      if(!shoulder||!upperArm)continue;
+      const shoulderLateral=Math.abs(shoulder.bx-modelCenter.x);
+      if((px-modelCenter.x)*side<shoulderLateral*0.42)continue;
+      const distance=Math.hypot(px-shoulder.bx,py-shoulder.by,pz-shoulder.bz);
+      if(distance>=shoulderPatchRadius)continue;
+      const blend=0.94*(1-distance/shoulderPatchRadius)**1.25,shoulderBone=shoulder.b,upperArmBone=upperArm.b;
+      for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-blend);
+      dense[offset+shoulderBone]+=blend*0.84;
+      dense[offset+upperArmBone]+=blend*0.16;
+      normalizeWeights(dense,offset,boneCount);
+    }
   }
   const assigned=protectedVertices.get(entry);
   if(assigned?.size){

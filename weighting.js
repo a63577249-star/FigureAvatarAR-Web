@@ -25,6 +25,8 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   }
   if(!armBones.size)return;
   const bounds=modelLocalBounds(),center=bounds.getCenter(new THREE.Vector3()),extent=bounds.getSize(new THREE.Vector3());
+  const headSegment=segments.find(segment=>segment.name==='head');
+  const headGuardRadius=Math.max(rootSize*0.15,headSegment?Math.sqrt(headSegment.lengthSq)*0.85:0);
   const armCorridors=new Map();
   for(const sideName of ['Left','Right']){
     const side=sideName==='Left'?1:-1;
@@ -32,15 +34,26 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
     if(!sideSegments.length)continue;
     const armMinY=Math.min(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
     const armMaxY=Math.max(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
-    const verticalPadding=Math.max(rootSize*0.10,extent.y*0.035);
-    const lateralLimit=Math.max(rootSize*0.05,extent.x*0.10);
+    const verticalPaddingDown=Math.max(rootSize*0.28,extent.y*0.12);
+    const verticalPaddingUp=Math.max(rootSize*0.07,extent.y*0.035);
+    const lateralLimit=Math.max(rootSize*0.05,extent.x*0.12);
     const seedRadius=Math.max(rootSize*0.11,extent.y*0.065);
-    const corridorRadius=Math.max(rootSize*0.18,extent.y*0.11);
+    const corridorRadius=Math.max(rootSize*0.22,extent.y*0.12);
     const mask=new Uint8Array(count);
     for(let vertex=0;vertex<count;vertex++){
       if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
       const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
-      if((x-center.x)*side<lateralLimit||y<armMinY-verticalPadding||y>armMaxY+verticalPadding)continue;
+      // Kimono-like sleeves can hang well below the elbow when the arm is
+      // raised. Extend the corridor downward more than upward so the hanging
+      // hem follows the connected sleeve without reaching hats or hair.
+      if((x-center.x)*side<lateralLimit
+        ||y<armMinY-verticalPaddingDown||y>armMaxY+verticalPaddingUp)continue;
+      if(headSegment){
+        const dx=x-headSegment.ax,dy=y-headSegment.ay,dz=z-headSegment.az;
+        const t=headSegment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*headSegment.abx+dy*headSegment.aby+dz*headSegment.abz)/headSegment.lengthSq,0,1):0;
+        const hx=x-(headSegment.ax+headSegment.abx*t),hy=y-(headSegment.ay+headSegment.aby*t),hz=z-(headSegment.az+headSegment.abz*t);
+        if(hx*hx+hy*hy+hz*hz<=headGuardRadius*headGuardRadius)continue;
+      }
       let nearest=Infinity,nearestSegment=null,nearestT=0,nearestCore=Infinity;
       for(const segment of sideSegments){
         const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
@@ -85,7 +98,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.12,sigma=Math.max(rootSize*0.075,1e-5),spreadScale=0.62;
+  const maxDistance=rootSize*0.24,sigma=Math.max(rootSize*0.13,1e-5),spreadScale=0.62;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';

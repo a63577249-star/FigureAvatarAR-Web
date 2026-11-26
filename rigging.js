@@ -6,7 +6,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-anatomical-proportions-20261126';
-import { createWeightingTools } from './weighting.js?v=weighting-sleeve-head-protection-20261126c';
+import { createWeightingTools } from './weighting.js?v=weighting-sleeve-mobile-bounds-20261126d';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
@@ -796,15 +796,24 @@ async function getMobilePoseLandmarker(){
 function placeMobileFallbackRig(){
   const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
   const h=Math.max(size.y,0.001),w=Math.max(size.x,0.001);
-  const y=ratio=>bounds.min.y+h*ratio,x=ratio=>center.x+w*ratio;
+  const y=ratio=>bounds.min.y+h*ratio;
+  // Wide sleeves and hats can dominate the model bounds. Use the same
+  // height-limited arm reach as the regular 19-joint placement instead of
+  // putting wrists at the outer edge of the costume.
+  const armReach=Math.min(w*0.49,h*0.36),shoulderOffset=Math.min(w*0.16,h*0.075);
+  const legSpacing=Math.min(w*0.09,h*0.04);
   const set=(name,px,py)=>{const bone=boneByName(name);bone.position=new THREE.Vector3(px,py,center.z);};
   // Keep mobile fallback at the same body-relative heights as the standard
   // 19-joint rig; the previous elevated values pulled the whole chain upward.
   set('hip',center.x,y(.46));set('supine',center.x,y(.54));set('chest',center.x,y(.62));set('neck',center.x,y(.70));set('head',center.x,y(.78));
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
-    set(prefix+'Shoulder',x(side*.16),y(.68));set(prefix+'UpperArm',x(side*.28),y(.63));
-    set(prefix+'Elbow',x(side*.39),y(.58));set(prefix+'Wrist',x(side*.49),y(.54));
-    set(prefix+'UpperLeg',x(side*.09),y(.40));set(prefix+'Knee',x(side*.10),y(.18));set(prefix+'Ankle',x(side*.10),y(.03));
+    set(prefix+'Shoulder',center.x+side*shoulderOffset,y(.68));
+    set(prefix+'UpperArm',center.x+side*armReach*.55,y(.63));
+    set(prefix+'Elbow',center.x+side*armReach*.78,y(.58));
+    set(prefix+'Wrist',center.x+side*armReach,y(.54));
+    set(prefix+'UpperLeg',center.x+side*legSpacing,y(.40));
+    set(prefix+'Knee',center.x+side*legSpacing,y(.18));
+    set(prefix+'Ankle',center.x+side*legSpacing,y(.03));
   }
 }
 
@@ -827,7 +836,7 @@ async function estimateMobileTemplateRig(){
   let result,projectionCamera;
   try{
     controls.enabled=false;controls.target.copy(worldCenter);
-    camera.up.set(0,1,0);camera.position.set(worldCenter.x,worldCenter.y,worldCenter.z+maxSize*2.2);camera.lookAt(worldCenter);camera.updateMatrixWorld(true);
+    camera.up.set(0,1,0);camera.position.set(worldCenter.x,worldCenter.y,worldCenter.z+maxSize*1.75);camera.lookAt(worldCenter);camera.updateMatrixWorld(true);
     projectionCamera=camera.clone();
     grid.visible=false;markerGroup.visible=false;if(rigLines)rigLines.visible=false;
     if(regionObject)regionObject.visible=false;transformHelper.visible=false;
@@ -894,16 +903,17 @@ async function estimateMobileTemplateRig(){
   // A-pose rig. This still uses the detected vertical placement when valid.
   const refineMobileArm=(side,prefix,shoulder,elbow,wrist)=>{
     const torsoX=fallback.get('chest').x;
+    const armReach=Math.abs(fallback.get(`${prefix}Wrist`).x-torsoX);
     const refine=(point,name,minLateral)=>{
       const reference=fallback.get(name),value=point.clone().lerp(reference,0.5);
-      const lateral=(value.x-torsoX)*side,minX=Math.max(size.x*minLateral,size.y*0.025);
+      const lateral=(value.x-torsoX)*side,minX=Math.max(armReach*minLateral,size.y*0.025);
       if(lateral<minX)value.x=torsoX+side*minX;
       value.y=THREE.MathUtils.clamp(value.y,reference.y-size.y*0.12,reference.y+size.y*0.02);
       return value;
     };
-    const fittedShoulder=refine(shoulder,`${prefix}Shoulder`,0.08);
-    const fittedElbow=refine(elbow,`${prefix}Elbow`,0.25);
-    const fittedWrist=refine(wrist,`${prefix}Wrist`,0.38);
+    const fittedShoulder=refine(shoulder,`${prefix}Shoulder`,0.12);
+    const fittedElbow=refine(elbow,`${prefix}Elbow`,0.62);
+    const fittedWrist=refine(wrist,`${prefix}Wrist`,0.84);
     return {shoulder:fittedShoulder,upperArm:fittedShoulder.clone().lerp(fittedElbow,0.52),elbow:fittedElbow,wrist:fittedWrist};
   };
   const leftArm=refineMobileArm(1,'Left',leftShoulder,leftElbow,leftWrist);

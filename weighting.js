@@ -18,10 +18,8 @@ function normalizeAllowedWeights(values,offset,boneOffset,boneCount,allowed,fall
 
 async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,segments,rootVertices,rootSize,count,boneCount){
   const armBones=new Set();
-  for(const segment of segments)if(segment.isArmLimb){armBones.add(segment.a);armBones.add(segment.b);}
-  for(let boneIndex=0;boneIndex<boneCount;boneIndex++){
-    const bone=BONE_DEFS[boneIndex];
-    if(/^(Left|Right)Shoulder$/.test(bone.name))armBones.add(boneIndex);
+  for(const segment of segments)if(segment.isArmLimb){
+    for(const boneIndex of [segment.a,segment.b])if(!/^(Left|Right)Shoulder$/.test(BONE_DEFS[boneIndex]?.name||''))armBones.add(boneIndex);
   }
   if(!armBones.size)return;
   const bounds=modelLocalBounds(),center=bounds.getCenter(new THREE.Vector3()),extent=bounds.getSize(new THREE.Vector3());
@@ -34,12 +32,12 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
     if(!sideSegments.length)continue;
     const armMinY=Math.min(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
     const armMaxY=Math.max(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
-    const verticalPaddingDown=Math.max(rootSize*0.20,extent.y*0.09);
+    const verticalPaddingDown=Math.max(rootSize*0.12,extent.y*0.055);
     const verticalPaddingUp=Math.max(rootSize*0.07,extent.y*0.035);
     const lateralLimit=Math.max(rootSize*0.045,extent.x*0.09);
     const seedRadius=Math.max(rootSize*0.17,extent.y*0.095);
-    const shoulderSeedRadius=Math.max(rootSize*0.25,extent.y*0.14);
-    const corridorRadius=Math.max(rootSize*0.25,extent.y*0.14);
+    const shoulderSeedRadius=Math.max(rootSize*0.28,extent.y*0.15);
+    const corridorRadius=Math.max(rootSize*0.22,extent.y*0.12);
     const mask=new Uint8Array(count);
     for(let vertex=0;vertex<count;vertex++){
       if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
@@ -81,7 +79,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       // Seed a narrow band of the sleeve even when it belongs to the same
       // connected mesh component as the torso. Require the arm chain to be at
       // least as close as the core, so hats and bodice surfaces stay untouched.
-      const coreClearance=rootSize*(shoulderRootSeed?0.11:0.025);
+      const coreClearance=rootSize*(shoulderRootSeed?0.12:0.025);
       if(nearest<=nearestCore+coreClearance){
         const amount=(shoulderRootSeed?0.86:0.72)*Math.exp(-0.5*(nearest/activeSeedRadius)**2),offset=vertex*boneCount;
         for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-amount);
@@ -184,6 +182,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
   }).filter(Boolean);
   if(!segmentData.length)throw new Error('ボーン間のつながりを作れません。親子関係を確認してください。');
   const upperArmSegments=new Map(segmentData.filter(segment=>/^(Left|Right)UpperArm$/.test(segment.name)).map(segment=>[segment.name,segment]));
+  const shoulderSegments=new Map(segmentData.filter(segment=>/^(Left|Right)Shoulder$/.test(segment.name)).map(segment=>[segment.name,segment]));
   const directSegmentAdj=segmentData.map((segment,index)=>segmentData.map((other,j)=>j!==index&&(segment.a===other.a||segment.a===other.b||segment.b===other.a||segment.b===other.b)?j:-1).filter(j=>j>=0));
   const influenceReach=segment=>{
     const length=Math.sqrt(segment.lengthSq);
@@ -195,7 +194,11 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     if(!/Shoulder$/.test(segment.name))return true;
     const sideName=segment.name.startsWith('Left')?'Left':'Right',side=sideName==='Left'?1:-1;
     const shoulderLateral=Math.abs((segment.ax+segment.bx)*0.5-modelCenter.x);
-    if((px-modelCenter.x)*side<Math.max(modelExtent.x*0.08,shoulderLateral*0.7))return false;
+    const shoulder=shoulderSegments.get(segment.name);
+    const shoulderPatchRadius=Math.max(rootSize*0.18,modelExtent.y*0.075);
+    const dxShoulder=shoulder?px-shoulder.bx:Infinity,dyShoulder=shoulder?py-shoulder.by:Infinity,dzShoulder=shoulder?pz-shoulder.bz:Infinity;
+    const nearShoulder=dxShoulder*dxShoulder+dyShoulder*dyShoulder+dzShoulder*dzShoulder<=shoulderPatchRadius*shoulderPatchRadius;
+    if(!nearShoulder&&(px-modelCenter.x)*side<Math.max(modelExtent.x*0.08,shoulderLateral*0.7))return false;
     // Expand shoulder influence along the child upper-arm surface only. The
     // chest-side region keeps the narrow original radius, so the torso does
     // not inherit the added shoulder motion.

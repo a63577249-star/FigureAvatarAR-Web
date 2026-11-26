@@ -317,6 +317,25 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;
     }
+    // Give the garment immediately around each shoulder joint a local shoulder
+    // blend directly. This avoids relying on the nearest-segment tie-break at
+    // the armpit, while the compact radius keeps the skirt outside the field.
+    if(!isHeadRegion&&!isFootRegion){
+      for(const sideName of ['Left','Right']){
+        const shoulder=shoulderSegments.get(`${sideName}Shoulder`);
+        const upperArm=upperArmSegments.get(`${sideName}UpperArm`);
+        if(!shoulder||!upperArm)continue;
+        const distance=Math.hypot(px-shoulder.bx,py-shoulder.by,pz-shoulder.bz);
+        const radius=Math.max(rootSize*0.085,modelExtent.y*0.095);
+        if(distance>=radius)continue;
+        const shoulderBone=shoulder.b,upperArmBone=upperArm.b;
+        const blend=0.78*(1-distance/radius)**2;
+        for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-blend);
+        dense[offset+shoulderBone]+=blend*0.72;
+        dense[offset+upperArmBone]+=blend*0.28;
+        allowedInfluences[offset+shoulderBone]=1;allowedInfluences[offset+upperArmBone]=1;
+      }
+    }
     normalizeWeights(dense,offset,boneCount);
   }
 

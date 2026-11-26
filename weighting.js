@@ -25,15 +25,39 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
     if(/^(Left|Right)Shoulder$/.test(bone.name))armBones.add(boneIndex);
   }
   if(!armBones.size)return;
+  const bounds=modelLocalBounds(),center=bounds.getCenter(new THREE.Vector3()),extent=bounds.getSize(new THREE.Vector3());
+  const armCorridors=new Map();
+  for(const sideName of ['Left','Right']){
+    const side=sideName==='Left'?1:-1;
+    const sideSegments=segments.filter(segment=>segment.isArmInfluence&&segment.name.startsWith(sideName));
+    const mask=new Uint8Array(count);
+    for(let vertex=0;vertex<count;vertex++){
+      if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
+      const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
+      if((x-center.x)*side<Math.max(rootSize*0.025,extent.x*0.025)
+        ||y<bounds.min.y+extent.y*0.40||y>bounds.max.y-extent.y*0.06)continue;
+      let nearest=Infinity;
+      for(const segment of sideSegments){
+        const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
+        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+        nearest=Math.min(nearest,Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t)));
+      }
+      if(nearest<=Math.max(rootSize*0.13,extent.y*0.08))mask[vertex]=1;
+    }
+    armCorridors.set(sideName,mask);
+  }
   const groupByVertex=new Array(count);
   for(const group of groups)for(const vertex of group)groupByVertex[vertex]=group;
-  // Keep the surface extension local to the joint. Long geodesic spreading
-  // can carry arm weights across a connected torso or skirt and pull seams apart.
-  const maxDistance=rootSize*0.10,sigma=Math.max(rootSize*0.07,1e-5),spreadScale=0.62;
+  // Spread arm labels through adjacent surface vertices near the arm chain.
+  // The side and chain corridor prevents the neighborhood walk from crossing
+  // the armpit into the chest or continuing down the torso.
+  const maxDistance=rootSize*0.13,sigma=Math.max(rootSize*0.085,1e-5),spreadScale=0.74;
   let processedBones=0;
   for(const boneIndex of armBones){
+    const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
+    const corridor=armCorridors.get(sideName);
     let seedStrength=0;
-    for(let v=0;v<count;v++)if(allowedInfluences[v*boneCount+boneIndex])seedStrength=Math.max(seedStrength,dense[v*boneCount+boneIndex]);
+    for(let v=0;v<count;v++)if(corridor[v]&&allowedInfluences[v*boneCount+boneIndex])seedStrength=Math.max(seedStrength,dense[v*boneCount+boneIndex]);
     if(seedStrength<0.025)continue;
     const distances=new Float32Array(count);distances.fill(Infinity);
     const heap=[];
@@ -47,9 +71,9 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       if(heap.length){let i=0;while(true){let child=i*2+1;if(child>=heap.length)break;if(child+1<heap.length&&heap[child+1][0]<heap[child][0])child++;if(heap[child][0]>=last[0])break;heap[i]=heap[child];i=child;}heap[i]=last;}
       return first;
     };
-    for(let v=0;v<count;v++)if(allowedInfluences[v*boneCount+boneIndex]){
+    for(let v=0;v<count;v++)if(corridor[v]&&allowedInfluences[v*boneCount+boneIndex]){
       const seedGroup=groupByVertex[v];
-      if(seedGroup){for(const member of seedGroup)if(distances[member]!==0){distances[member]=0;push(member,0);}}
+      if(seedGroup){for(const member of seedGroup)if(corridor[member]&&distances[member]!==0){distances[member]=0;push(member,0);}}
       else if(distances[v]!==0){distances[v]=0;push(v,0);}
     }
     let visited=0;
@@ -57,6 +81,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       const [distance,vertex]=pop();
       if(distance!==distances[vertex]||distance>maxDistance)continue;
       for(const neighbor of graph.neighbors[vertex]){
+        if(!corridor[neighbor])continue;
         const dx=rootVertices[vertex*3]-rootVertices[neighbor*3];
         const dy=rootVertices[vertex*3+1]-rootVertices[neighbor*3+1];
         const dz=rootVertices[vertex*3+2]-rootVertices[neighbor*3+2];

@@ -34,11 +34,11 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
     if(!sideSegments.length)continue;
     const armMinY=Math.min(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
     const armMaxY=Math.max(...sideSegments.flatMap(segment=>[segment.ay,segment.by]));
-    const verticalPaddingDown=Math.max(rootSize*0.28,extent.y*0.12);
+    const verticalPaddingDown=Math.max(rootSize*0.36,extent.y*0.16);
     const verticalPaddingUp=Math.max(rootSize*0.07,extent.y*0.035);
     const lateralLimit=Math.max(rootSize*0.05,extent.x*0.12);
-    const seedRadius=Math.max(rootSize*0.11,extent.y*0.065);
-    const corridorRadius=Math.max(rootSize*0.22,extent.y*0.12);
+    const seedRadius=Math.max(rootSize*0.15,extent.y*0.085);
+    const corridorRadius=Math.max(rootSize*0.29,extent.y*0.16);
     const mask=new Uint8Array(count);
     for(let vertex=0;vertex<count;vertex++){
       if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
@@ -78,9 +78,9 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       // connected mesh component as the torso. Require the arm chain to be at
       // least as close as the core, so hats and bodice surfaces stay untouched.
       const shoulderRootSeed=/^(Left|Right)(Shoulder|UpperArm)$/.test(nearestSegment.name)&&nearestT<0.62;
-      const coreClearance=rootSize*(shoulderRootSeed?0.045:0.025);
+      const coreClearance=rootSize*(shoulderRootSeed?0.065:0.025);
       if(nearest<=nearestCore+coreClearance){
-        const amount=(shoulderRootSeed?0.76:0.68)*Math.exp(-0.5*(nearest/seedRadius)**2),offset=vertex*boneCount;
+        const amount=(shoulderRootSeed?0.82:0.72)*Math.exp(-0.5*(nearest/seedRadius)**2),offset=vertex*boneCount;
         for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-amount);
         dense[offset+nearestSegment.a]+=amount*(1-nearestT);
         dense[offset+nearestSegment.b]+=amount*nearestT;
@@ -98,7 +98,7 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.24,sigma=Math.max(rootSize*0.13,1e-5),spreadScale=0.62;
+  const maxDistance=rootSize*0.31,sigma=Math.max(rootSize*0.17,1e-5),spreadScale=0.68;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
@@ -201,7 +201,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       const dx=px-upperArm.ax,dy=py-upperArm.ay,dz=pz-upperArm.az;
       const t=upperArm.lengthSq>1e-12?THREE.MathUtils.clamp((dx*upperArm.abx+dy*upperArm.aby+dz*upperArm.abz)/upperArm.lengthSq,0,1):0;
       const ox=px-(upperArm.ax+upperArm.abx*t),oy=py-(upperArm.ay+upperArm.aby*t),oz=pz-(upperArm.az+upperArm.abz*t);
-      const armSideReach=Math.max(rootSize*0.13,Math.sqrt(upperArm.lengthSq)*0.52);
+      const armSideReach=Math.max(rootSize*0.16,Math.sqrt(upperArm.lengthSq)*0.66);
       if(ox*ox+oy*oy+oz*oz<=armSideReach*armSideReach)return true;
     }
     const dx=px-segment.ax,dy=py-segment.ay,dz=pz-segment.az;
@@ -306,7 +306,7 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
       const shoulderBridge=/Shoulder$/.test(seg.name)&&['chest','neck'].includes(primarySegment.name);
       const shoulderArmBlend=/Shoulder$/.test(seg.name)&&primarySegment.isArmLimb;
       if(shoulderBridge)amount=Math.min(0.4,Math.max(amount,0.28));
-      else if(shoulderArmBlend)amount=Math.min(0.3,Math.max(amount,0.18));
+      else if(shoulderArmBlend)amount=Math.min(0.34,Math.max(amount,0.22));
       else if(primarySegment.isArmLimb!==seg.isArmLimb||/Shoulder$/.test(primarySegment.name)!==/Shoulder$/.test(seg.name))amount=Math.min(amount,0.08);
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;

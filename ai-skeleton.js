@@ -405,6 +405,9 @@ function fitAiPredictionToBasic19(candidates){
   const box=modelLocalBounds(),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
   const height=Math.max(size.y,0.001),width=Math.max(size.x,0.001),longest=Math.max(size.x,size.y,size.z,0.001);
   const y=ratio=>box.min.y+height*ratio,x=ratio=>center.x+width*ratio;
+  // Accessory and sleeve bounds can be much wider than the torso. Cap arm reach using body height.
+  const armReach=Math.min(width*0.49,height*0.34);
+  const legSpacing=Math.min(width*0.09,height*0.075);
   const targetByName=new Map([
     ['hip',new THREE.Vector3(center.x,y(.48),center.z)],
     ['supine',new THREE.Vector3(center.x,y(.61),center.z)],
@@ -413,48 +416,14 @@ function fitAiPredictionToBasic19(candidates){
     ['head',new THREE.Vector3(center.x,y(.94),center.z)]
   ]);
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
-    targetByName.set(`${prefix}Shoulder`,new THREE.Vector3(x(side*.17),y(.77),center.z));
-    targetByName.set(`${prefix}UpperArm`,new THREE.Vector3(x(side*.28),y(.74),center.z));
-    targetByName.set(`${prefix}Elbow`,new THREE.Vector3(x(side*.39),y(.71),center.z));
-    targetByName.set(`${prefix}Wrist`,new THREE.Vector3(x(side*.49),y(.68),center.z));
-    targetByName.set(`${prefix}UpperLeg`,new THREE.Vector3(x(side*.09),y(.45),center.z));
-    targetByName.set(`${prefix}Knee`,new THREE.Vector3(x(side*.10),y(.25),center.z));
-    targetByName.set(`${prefix}Ankle`,new THREE.Vector3(x(side*.10),y(.06),center.z));
+    targetByName.set(`${prefix}Shoulder`,new THREE.Vector3(center.x+side*armReach*0.34,y(.77),center.z));
+    targetByName.set(`${prefix}UpperArm`,new THREE.Vector3(center.x+side*armReach*0.55,y(.74),center.z));
+    targetByName.set(`${prefix}Elbow`,new THREE.Vector3(center.x+side*armReach*0.78,y(.71),center.z));
+    targetByName.set(`${prefix}Wrist`,new THREE.Vector3(center.x+side*armReach,y(.68),center.z));
+    targetByName.set(`${prefix}UpperLeg`,new THREE.Vector3(center.x+side*legSpacing,y(.45),center.z));
+    targetByName.set(`${prefix}Knee`,new THREE.Vector3(center.x+side*legSpacing,y(.25),center.z));
+    targetByName.set(`${prefix}Ankle`,new THREE.Vector3(center.x+side*legSpacing,y(.06),center.z));
   }
-  const snapArmTargetToSurface=(target,side)=>{
-    const entries=getModelEntries();
-    const maxSnapDistance=longest*0.28;
-    const yTolerance=height*0.12;
-    let best=null,bestDistanceSq=maxSnapDistance*maxSnapDistance;
-    for(const entry of entries){
-      const positions=entry.rootPositions;
-      if(!positions)continue;
-      const count=positions.length/3,step=Math.max(1,Math.ceil(count/50000));
-      for(let vertex=0;vertex<count;vertex+=step){
-        const offset=vertex*3,x=positions[offset],py=positions[offset+1],z=positions[offset+2];
-        if((x-center.x)*side<width*0.015||Math.abs(py-target.y)>yTolerance)continue;
-        const dx=x-target.x,dy=py-target.y,dz=z-target.z,distanceSq=dx*dx+dy*dy+dz*dz;
-        if(distanceSq>=bestDistanceSq)continue;
-        bestDistanceSq=distanceSq;
-        best={entry,vertex,x,y:py,z};
-      }
-    }
-    if(!best)return target;
-    const positions=best.entry.rootPositions,normals=best.entry.rootNormals,count=positions.length/3;
-    const step=Math.max(1,Math.ceil(count/50000)),from=Math.max(0,best.vertex-step),to=Math.min(count-1,best.vertex+step);
-    for(let vertex=from;vertex<=to;vertex++){
-      const offset=vertex*3,x=positions[offset],py=positions[offset+1],z=positions[offset+2];
-      if((x-center.x)*side<width*0.015||Math.abs(py-target.y)>yTolerance)continue;
-      const dx=x-target.x,dy=py-target.y,dz=z-target.z,distanceSq=dx*dx+dy*dy+dz*dz;
-      if(distanceSq<bestDistanceSq){bestDistanceSq=distanceSq;best={entry:best.entry,vertex,x,y:py,z};}
-    }
-    const normalArray=best.entry.rootNormals;
-    if(!normalArray)return new THREE.Vector3(best.x,best.y,best.z);
-    const offset=best.vertex*3,normal=new THREE.Vector3(normalArray[offset],normalArray[offset+1],normalArray[offset+2]).normalize();
-    const outward=new THREE.Vector3(best.x-center.x,best.y-center.y,best.z-center.z);
-    if(normal.dot(outward)<0)normal.negate();
-    return new THREE.Vector3(best.x,best.y,best.z).addScaledVector(normal,-Math.min(height*0.015,longest*0.01));
-  };
   const bones=TEMPLATE_BONES.map(bone=>({...bone,position:null,surfacePoint:null,surfaceNormal:null,bone:null,marker:null}));
   const assignments=new Array(bones.length).fill(-1),usedCandidates=new Set(),pairs=[];
   for(let target=0;target<bones.length;target++){
@@ -471,7 +440,7 @@ function fitAiPredictionToBasic19(candidates){
     assignments[pair.target]=pair.candidate;usedCandidates.add(pair.candidate);
   }
   let matched=0;
-  const maxCorrection=longest*0.035;
+  const maxCorrection=Math.min(longest*0.035,height*0.015);
   for(let index=0;index<bones.length;index++){
     const target=targetByName.get(bones[index].name);
     bones[index].position=target.clone();
@@ -481,11 +450,6 @@ function fitAiPredictionToBasic19(candidates){
       if(correction.length()>maxCorrection)correction.setLength(maxCorrection);
       bones[index].position.addScaledVector(correction,0.35);
       matched++;
-    }
-    const armMatch=bones[index].name.match(/^(Left|Right)(Shoulder|UpperArm|Elbow|Wrist)$/);
-    if(armMatch){
-      const side=armMatch[1]==='Left'?1:-1;
-      bones[index].position=snapArmTargetToSurface(bones[index].position,side);
     }
   }
   return {bones,matched};

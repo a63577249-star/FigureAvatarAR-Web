@@ -5,7 +5,7 @@ import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-skeleton-surface-snap-20261126';
+import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-skeleton-limb-span-cap-20261126';
 import { createWeightingTools } from './weighting.js?v=weighting-module-20261126';
 
 const BONE_DEFS = [

@@ -1152,6 +1152,50 @@ function buildAiBoneDefs(tokens,center,longest,bounds){
   }));
 }
 
+function fitAiPredictionToBasic19(candidates){
+  const box=modelLocalBounds(),size=box.getSize(new THREE.Vector3()),center=box.getCenter(new THREE.Vector3());
+  const height=Math.max(size.y,0.001),width=Math.max(size.x,0.001),longest=Math.max(size.x,size.y,size.z,0.001);
+  const y=ratio=>box.min.y+height*ratio,x=ratio=>center.x+width*ratio;
+  const targetByName=new Map([
+    ['hip',new THREE.Vector3(center.x,y(.48),center.z)],
+    ['supine',new THREE.Vector3(center.x,y(.61),center.z)],
+    ['chest',new THREE.Vector3(center.x,y(.73),center.z)],
+    ['neck',new THREE.Vector3(center.x,y(.85),center.z)],
+    ['head',new THREE.Vector3(center.x,y(.94),center.z)]
+  ]);
+  for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
+    targetByName.set(`${prefix}Shoulder`,new THREE.Vector3(x(side*.17),y(.77),center.z));
+    targetByName.set(`${prefix}UpperArm`,new THREE.Vector3(x(side*.28),y(.74),center.z));
+    targetByName.set(`${prefix}Elbow`,new THREE.Vector3(x(side*.39),y(.71),center.z));
+    targetByName.set(`${prefix}Wrist`,new THREE.Vector3(x(side*.49),y(.68),center.z));
+    targetByName.set(`${prefix}UpperLeg`,new THREE.Vector3(x(side*.09),y(.45),center.z));
+    targetByName.set(`${prefix}Knee`,new THREE.Vector3(x(side*.10),y(.25),center.z));
+    targetByName.set(`${prefix}Ankle`,new THREE.Vector3(x(side*.10),y(.06),center.z));
+  }
+  const bones=TEMPLATE_BONES.map(bone=>({...bone,position:null,surfacePoint:null,surfaceNormal:null,bone:null,marker:null}));
+  const assignments=new Array(bones.length).fill(-1),usedCandidates=new Set(),pairs=[];
+  for(let target=0;target<bones.length;target++){
+    const targetPoint=targetByName.get(bones[target].name);
+    for(let candidate=0;candidate<candidates.length;candidate++){
+      pairs.push({target,candidate,distance:targetPoint.distanceToSquared(candidates[candidate].position)});
+    }
+  }
+  pairs.sort((a,b)=>a.distance-b.distance);
+  const maxMatchDistanceSq=(longest*0.22)**2;
+  for(const pair of pairs){
+    if(pair.distance>maxMatchDistanceSq)break;
+    if(assignments[pair.target]>=0||usedCandidates.has(pair.candidate))continue;
+    assignments[pair.target]=pair.candidate;usedCandidates.add(pair.candidate);
+  }
+  let matched=0;
+  for(let index=0;index<bones.length;index++){
+    const candidate=assignments[index];
+    if(candidate>=0){bones[index].position=candidates[candidate].position.clone();matched++;}
+    else bones[index].position=targetByName.get(bones[index].name).clone();
+  }
+  return {bones,matched};
+}
+
 async function getMobilePoseLandmarker(){
   if(!mobilePoseTaskPromise){
     mobilePoseTaskPromise=(async()=>{
@@ -1257,13 +1301,14 @@ async function runAiAutoRig(mode){
     }
     if(IS_MOBILE_DEVICE) setStatus('PC向けUniRigをスマートフォンで実行中です。大きなモデルを取得するため、ページが再読み込みされる可能性があります。');
     const prediction=await predictAiSkeleton();
-    const nodes=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest,prediction.bounds);
-    if(nodes.length<2)throw new Error('AIの予測結果が短すぎます。別の角度またはモデルで試してください。');
+    const candidates=buildAiBoneDefs(prediction.tokens,prediction.center,prediction.longest,prediction.bounds);
+    const fitted=fitAiPredictionToBasic19(candidates);
+    const nodes=fitted.bones;
     BONE_DEFS.splice(0,BONE_DEFS.length,...nodes);
     rigMode='ai';activeBoneName=BONE_DEFS[0].name;
     updateMarkers();renderBoneList();
     autoButton.textContent='標準19関節に戻す';
-    setStatus(`AIが${nodes.length}関節の骨格を推定しました。関節点とつながりを確認し、必要なら修正してからウェイトを生成してください。`);
+    setStatus(`AI骨格を基本19関節にまとめました（推定点${candidates.length}個のうち${fitted.matched}個を採用）。関節位置を確認し、必要なら修正してからウェイトを生成してください。`);
   }catch(error){
     console.error(error);
     const detail=error.message||String(error);

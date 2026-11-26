@@ -64,7 +64,7 @@
         <h2>2. ボーンの位置を調整</h2>
         <button id="ai-auto-rig-desktop" class="secondary">PC向け AI骨格推定（UniRig・約455MB）</button>
         <button id="ai-auto-rig-mobile" class="secondary">スマホ向け 軽量AI骨格推定（Pose Lite）</button>
-        <p class="hint">PC向けはモデル形状を直接解析します。初回に約455MBを取得するため、スマートフォンではページ再読み込みの恐れがあります。スマホ向けは数MBのPose Liteで画面内のモデルから19関節を推定します。画像は端末内で解析し、外部へ送信しません。画像からの推定なので、関節位置を確認・修正してください。MediaPipeのライブラリ利用統計が送信される場合があります。</p>
+        <p class="hint">PC向けはモデル形状を直接解析します。初回に約455MBを取得するため、スマートフォンではページ再読み込みの恐れがあります。スマホ向けは数MBのPose Liteで画面内のモデルから19関節を推定します。リギングに使う骨格は、どちらの方法でも頭・胴体・左右の腕と脚を動かす標準19関節にまとめます。位置を確認・修正してからウェイトを生成してください。MediaPipeのライブラリ利用統計が送信される場合があります。</p>
         <div id="bone-list"></div>
         <label class="hint" for="bone-depth">表面から内側へ <output id="bone-depth-value">3%</output></label>
         <input id="bone-depth" type="range" min="0" max="12" value="3" step="0.5">

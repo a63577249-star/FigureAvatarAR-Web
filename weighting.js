@@ -17,7 +17,6 @@ function normalizeAllowedWeights(values,offset,boneOffset,boneCount,allowed,fall
 }
 
 async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,segments,rootVertices,rootSize,count,boneCount){
-  if(!graph)return;
   const armBones=new Set();
   for(const segment of segments)if(segment.isArmLimb){armBones.add(segment.a);armBones.add(segment.b);}
   for(let boneIndex=0;boneIndex<boneCount;boneIndex++){
@@ -35,26 +34,49 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,groups,
       if(vertex>0&&vertex%16384===0){setStatus(`袖の近傍頂点を調べています… ${sideName}`);await new Promise(resolve=>requestAnimationFrame(resolve));}
       const x=rootVertices[vertex*3],y=rootVertices[vertex*3+1],z=rootVertices[vertex*3+2];
       if((x-center.x)*side<Math.max(rootSize*0.04,extent.x*0.035)
-        ||y<bounds.min.y+extent.y*0.40||y>bounds.max.y-extent.y*0.06)continue;
-      let nearest=Infinity;
+        ||y<bounds.min.y+extent.y*0.40||y>bounds.max.y-extent.y*0.12)continue;
+      let nearest=Infinity,nearestSegment=null,nearestT=0,nearestCore=Infinity;
       for(const segment of sideSegments){
         const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
         const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
-        nearest=Math.min(nearest,Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t)));
+        const distance=Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t));
+        if(distance<nearest){nearest=distance;nearestSegment=segment;nearestT=t;}
       }
       // Keep the propagation corridor tightly attached to the arm chain.
       // A broad Euclidean corridor also catches nearby torso clothing and
       // accessories even when they are separate surface islands.
-      if(nearest<=Math.max(rootSize*0.085,extent.y*0.05))mask[vertex]=1;
+      const seedRadius=Math.max(rootSize*0.085,extent.y*0.05);
+      if(nearest>seedRadius||!nearestSegment)continue;
+      for(const segment of segments){
+        if(!segment.isCore)continue;
+        const dx=x-segment.ax,dy=y-segment.ay,dz=z-segment.az;
+        const t=segment.lengthSq>1e-12?THREE.MathUtils.clamp((dx*segment.abx+dy*segment.aby+dz*segment.abz)/segment.lengthSq,0,1):0;
+        nearestCore=Math.min(nearestCore,Math.hypot(x-(segment.ax+segment.abx*t),y-(segment.ay+segment.aby*t),z-(segment.az+segment.abz*t)));
+      }
+      // Seed a narrow band of the sleeve even when it belongs to the same
+      // connected mesh component as the torso. Require the arm chain to be at
+      // least as close as the core, so hats and bodice surfaces stay untouched.
+      if(nearest<=nearestCore+rootSize*0.025){
+        mask[vertex]=1;
+        const amount=0.62*Math.exp(-0.5*(nearest/seedRadius)**2),offset=vertex*boneCount;
+        for(let b=0;b<boneCount;b++)dense[offset+b]*=(1-amount);
+        dense[offset+nearestSegment.a]+=amount*(1-nearestT);
+        dense[offset+nearestSegment.b]+=amount*nearestT;
+        allowedInfluences[offset+nearestSegment.a]=1;allowedInfluences[offset+nearestSegment.b]=1;
+        normalizeWeights(dense,offset,boneCount);
+      }
     }
     armCorridors.set(sideName,mask);
   }
+  // Large phone meshes skip the memory-heavy surface graph. Keep the local
+  // sleeve seeds above active there too; only the geodesic spreading needs it.
+  if(!graph){for(let v=0;v<count;v++)normalizeWeights(dense,v*boneCount,boneCount);return;}
   const groupByVertex=new Array(count);
   for(const group of groups)for(const vertex of group)groupByVertex[vertex]=group;
   // Spread arm labels through adjacent surface vertices near the arm chain.
   // The side and chain corridor prevents the neighborhood walk from crossing
   // the armpit into the chest or continuing down the torso.
-  const maxDistance=rootSize*0.105,sigma=Math.max(rootSize*0.065,1e-5),spreadScale=0.58;
+  const maxDistance=rootSize*0.085,sigma=Math.max(rootSize*0.055,1e-5),spreadScale=0.56;
   let processedBones=0;
   for(const boneIndex of armBones){
     const boneName=BONE_DEFS[boneIndex].name,sideName=boneName.startsWith('Left')?'Left':'Right';
@@ -243,7 +265,9 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     if(secondaryIndex>=0&&bestGap<=maxGap&&hitDistances[secondaryIndex]<=nearestDistance*1.15+rootSize*0.005){
       const seg=segmentData[secondaryIndex],t=hitParameters[secondaryIndex];
       let amount=Math.min(0.3,Math.exp(-(bestGap*bestGap)/(2*sigma*sigma)));
-      if(primarySegment.isArmLimb!==seg.isArmLimb||/Shoulder$/.test(primarySegment.name)!==/Shoulder$/.test(seg.name))amount=Math.min(amount,0.08);
+      const shoulderBridge=/Shoulder$/.test(seg.name)&&['chest','neck'].includes(primarySegment.name);
+      if(shoulderBridge)amount=Math.min(0.32,Math.max(amount,0.22));
+      else if(primarySegment.isArmLimb!==seg.isArmLimb||/Shoulder$/.test(primarySegment.name)!==/Shoulder$/.test(seg.name))amount=Math.min(amount,0.08);
       dense[offset+seg.a]+=amount*(1-t);dense[offset+seg.b]+=amount*t;
       allowedInfluences[offset+seg.a]=1;allowedInfluences[offset+seg.b]=1;
     }

@@ -797,7 +797,7 @@ function placeMobileFallbackRig(){
   const bounds=modelLocalBounds(),size=bounds.getSize(new THREE.Vector3()),center=bounds.getCenter(new THREE.Vector3());
   const h=Math.max(size.y,0.001),w=Math.max(size.x,0.001);
   const y=ratio=>bounds.min.y+h*ratio,x=ratio=>center.x+w*ratio;
-  const set=(name,px,py)=>{const bone=boneByName(name);bone.position.set(px,py,center.z);};
+  const set=(name,px,py)=>{const bone=boneByName(name);bone.position=new THREE.Vector3(px,py,center.z);};
   set('hip',center.x,y(.48));set('supine',center.x,y(.61));set('chest',center.x,y(.73));set('neck',center.x,y(.85));set('head',center.x,y(.90));
   for(const [side,prefix] of [[1,'Left'],[-1,'Right']]){
     set(prefix+'Shoulder',x(side*.17),y(.77));set(prefix+'UpperArm',x(side*.28),y(.74));

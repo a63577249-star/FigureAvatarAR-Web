@@ -43,6 +43,14 @@ const protectBrush = document.querySelector('#protect-brush');
 const protectBrushValue = document.querySelector('#protect-brush-value');
 const protectToggle = document.querySelector('#protect-toggle');
 const clearProtectedButton = document.querySelector('#clear-protected');
+const weightPaintBone = document.querySelector('#weight-paint-bone');
+const weightPaintModeSelect = document.querySelector('#weight-paint-mode');
+const weightPaintStrength = document.querySelector('#weight-paint-strength');
+const weightPaintStrengthValue = document.querySelector('#weight-paint-strength-value');
+const weightPaintRadius = document.querySelector('#weight-paint-radius');
+const weightPaintRadiusValue = document.querySelector('#weight-paint-radius-value');
+const weightPaintToggle = document.querySelector('#weight-paint-toggle');
+const weightPaintUndo = document.querySelector('#weight-paint-undo');
 const regionToggle = document.querySelector('#region-toggle');
 const regionModeSelect = document.querySelector('#region-mode');
 const regionDetectButton = document.querySelector('#region-detect');
@@ -93,6 +101,9 @@ let rigMode = 'template';
 let mobilePoseTaskPromise = null;
 let protectMode = false;
 let protectedVertices = new Map();
+let weightPaintMode = false;
+let weightPaintUndoStack = [];
+let activeWeightStroke = null;
 let lastPaintKey = null;
 let lastPaintAt = 0;
 let regionObject = null;
@@ -149,7 +160,18 @@ function refreshProtectedBoneOptions() {
   const ready=Boolean(modelRoot&&BONE_DEFS.some(bone=>bone.position));
   protectedBoneSelect.disabled=!ready;protectBrush.disabled=!modelRoot;protectToggle.disabled=!ready;clearProtectedButton.disabled=![...protectedVertices.values()].some(assignments=>assignments.size>0);
 }
+function refreshWeightPaintControls(){
+  if(!weightPaintBone)return;
+  const previous=weightPaintBone.value;
+  weightPaintBone.replaceChildren();
+  for(const bone of BONE_DEFS){const option=document.createElement('option');option.value=bone.name;option.textContent=bone.label;weightPaintBone.append(option);}
+  weightPaintBone.value=BONE_DEFS.some(bone=>bone.name===previous)?previous:(activeBoneName||BONE_DEFS[0]?.name||'');
+  const ready=Boolean(generatedRig&&modelEntries.some(entry=>entry.generated));
+  weightPaintBone.disabled=!ready;weightPaintStrength.disabled=!ready;weightPaintRadius.disabled=!ready;
+  weightPaintToggle.disabled=!ready;weightPaintUndo.disabled=!ready||weightPaintUndoStack.length===0;
+}
 renderBoneList();
+refreshWeightPaintControls();
 
 function setRigEditingEnabled(enabled) {
   placeButton.disabled = !enabled;
@@ -162,6 +184,8 @@ function setRigEditingEnabled(enabled) {
 function revokeOldModel() {
   placeMode = false;
   protectMode = false;
+  setWeightPaintMode(false);
+  weightPaintUndoStack=[];activeWeightStroke=null;
   protectedVertices = new Map();
   controls.enabled = true;
   regionTransform.detach();
@@ -170,6 +194,7 @@ function revokeOldModel() {
   regionToggle.textContent = '範囲ボックスを表示';
   placeButton.textContent = '位置を置く：OFF';
   protectToggle.textContent = '固定領域を塗る：OFF';
+  refreshWeightPaintControls();
   if (modelRoot) {
     scene.remove(modelRoot);
     modelRoot.traverse(object => {
@@ -582,11 +607,96 @@ function paintProtectedSurface(clientX,clientY) {
   return true;
 }
 
+function captureWeightStrokeVertex(entry,vertex){
+  if(!activeWeightStroke)return;
+  let vertices=activeWeightStroke.get(entry);if(!vertices){vertices=new Map();activeWeightStroke.set(entry,vertices);}
+  if(vertices.has(vertex))return;
+  const index=entry.generated.geometry.getAttribute('skinIndex'),weight=entry.generated.geometry.getAttribute('skinWeight'),offset=vertex*4;
+  vertices.set(vertex,{indices:Array.from(index.array.subarray(offset,offset+4)),weights:Array.from(weight.array.subarray(offset,offset+4))});
+}
+
+function paintGeneratedWeights(clientX,clientY){
+  const hit=pickSurface(clientX,clientY);if(!hit)return 0;
+  const entry=modelEntries.find(item=>item.generated===hit.object);if(!entry?.generated)return 0;
+  const boneIndex=BONE_DEFS.findIndex(bone=>bone.name===weightPaintBone.value);if(boneIndex<0)return 0;
+  const geometry=entry.generated.geometry,index=geometry.getAttribute('skinIndex'),weight=geometry.getAttribute('skinWeight');
+  const positions=entry.rootPositions,normals=entry.rootNormals,center=modelRoot.worldToLocal(hit.point.clone());
+  const radius=Math.max(modelLocalBounds().getSize(new THREE.Vector3()).length()*Number(weightPaintRadius.value)/100,1e-5),radiusSq=radius*radius;
+  const hitNormal=hit.face?hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)):new THREE.Vector3(0,0,1);
+  hitNormal.applyMatrix3(new THREE.Matrix3().getNormalMatrix(modelRoot.matrixWorld.clone().invert())).normalize();
+  const strength=Number(weightPaintStrength.value)/100,addMode=weightPaintModeSelect.value==='add';
+  let changed=0;
+  for(let vertex=0;vertex<positions.length/3;vertex++){
+    const dx=positions[vertex*3]-center.x,dy=positions[vertex*3+1]-center.y,dz=positions[vertex*3+2]-center.z,distanceSq=dx*dx+dy*dy+dz*dz;
+    if(distanceSq>radiusSq)continue;
+    if(normals&&normals[vertex*3]*hitNormal.x+normals[vertex*3+1]*hitNormal.y+normals[vertex*3+2]*hitNormal.z<0.15)continue;
+    const falloff=(1-Math.sqrt(distanceSq)/radius)**2,amount=strength*falloff;if(amount<0.005)continue;
+    const offset=vertex*4,values=new Map();
+    for(let slot=0;slot<4;slot++){const id=index.array[offset+slot],value=weight.array[offset+slot];if(value>1e-7)values.set(id,(values.get(id)||0)+value);}
+    const old=values.get(boneIndex)||0;
+    if(!addMode&&old<=1e-7)continue;
+    if(addMode){
+      const next=old+(1-old)*amount;
+      if(!values.has(boneIndex)&&values.size>=4){const weakest=[...values].sort((a,b)=>a[1]-b[1])[0];if(weakest[1]>=next)continue;values.delete(weakest[0]);}
+      const remaining=[...values].filter(([id])=>id!==boneIndex),remainingSum=remaining.reduce((sum,item)=>sum+item[1],0);
+      values.set(boneIndex,next);const scale=remainingSum>1e-8?(1-next)/remainingSum:0;
+      for(const [id,value] of remaining)values.set(id,value*scale);
+    }else{
+      const next=old*(1-amount),removed=old-next;values.set(boneIndex,next);
+      const remaining=[...values].filter(([id])=>id!==boneIndex),remainingSum=remaining.reduce((sum,item)=>sum+item[1],0);
+      if(remainingSum<=1e-8)continue;
+      for(const [id,value] of remaining)values.set(id,value+removed*value/remainingSum);
+    }
+    const top=[...values].filter(([,value])=>value>1e-7).sort((a,b)=>b[1]-a[1]).slice(0,4);let sum=top.reduce((total,item)=>total+item[1],0);
+    if(sum<=1e-8)continue;
+    captureWeightStrokeVertex(entry,vertex);
+    for(let slot=0;slot<4;slot++){const item=top[slot]||[0,0];index.array[offset+slot]=item[0];weight.array[offset+slot]=item[1]/sum;}
+    changed++;
+  }
+  if(changed){index.needsUpdate=true;weight.needsUpdate=true;entry.generated.computeBoundingSphere();}
+  return changed;
+}
+
+function setWeightPaintMode(enabled){
+  weightPaintMode=Boolean(enabled&&generatedRig&&modelEntries.some(entry=>entry.generated));
+  if(weightPaintMode){
+    if(protectMode)setProtectMode(false);
+    if(placeMode){placeMode=false;placeButton.textContent='位置を置く：OFF';placeButton.style.background='';}
+    if(regionObject?.visible)setRegionVisible(false);
+  }
+  controls.enabled=!weightPaintMode&&!protectMode&&!placeMode;
+  weightPaintToggle.textContent=`ウェイトを塗る：${weightPaintMode?'ON':'OFF'}`;
+  weightPaintToggle.style.background=weightPaintMode?'#79421e':'';
+  viewHelp.textContent=weightPaintMode?'モデル表面をドラッグしてウェイトを塗ります。操作をOFFにすると視点を回せます。':'ドラッグで視点を回転できます。';
+  pointerStart=null;activeWeightStroke=null;
+}
+
+function finishWeightPaintStroke(){
+  if(activeWeightStroke?.size){
+    weightPaintUndoStack.push(activeWeightStroke);if(weightPaintUndoStack.length>12)weightPaintUndoStack.shift();
+    let count=0;for(const vertices of activeWeightStroke.values())count+=vertices.size;
+    setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'選択ボーン'}のウェイトを${count.toLocaleString()}頂点塗り直しました。必要なら直前の塗りを戻せます。`);
+  }
+  activeWeightStroke=null;refreshWeightPaintControls();
+}
+
+function undoWeightPaint(){
+  const stroke=weightPaintUndoStack.pop();if(!stroke)return;
+  for(const [entry,vertices] of stroke){
+    if(!entry.generated)continue;
+    const index=entry.generated.geometry.getAttribute('skinIndex'),weight=entry.generated.geometry.getAttribute('skinWeight');
+    for(const [vertex,snapshot] of vertices){const offset=vertex*4;for(let slot=0;slot<4;slot++){index.array[offset+slot]=snapshot.indices[slot];weight.array[offset+slot]=snapshot.weights[slot];}}
+    index.needsUpdate=true;weight.needsUpdate=true;entry.generated.computeBoundingSphere();
+  }
+  refreshWeightPaintControls();setStatus('直前のウェイト塗りを元に戻しました。');
+}
+
 function setProtectMode(enabled) {
   protectMode=enabled;lastPaintKey=null;lastPaintAt=0;
+  if(enabled&&weightPaintMode)setWeightPaintMode(false);
   if(enabled&&placeMode){placeMode=false;placeButton.textContent='位置を置く：OFF';placeButton.style.background='';}
   if(enabled&&regionObject?.visible)setRegionVisible(false);
-  controls.enabled=!enabled&&!placeMode;
+  controls.enabled=!enabled&&!placeMode&&!weightPaintMode;
   protectToggle.textContent=`固定領域を塗る：${enabled?'ON':'OFF'}`;
   protectToggle.style.background=enabled?'#79421e':'';
   viewHelp.textContent=enabled?'角・髪などをドラッグして塗ります。塗った部分は選択ボーンに100%固定されます。':'ドラッグで視点を回転できます。';
@@ -597,6 +707,11 @@ protectToggle.addEventListener('click',()=>setProtectMode(!protectMode));
 protectedBoneSelect.addEventListener('change',()=>setStatus(`${protectedBoneSelect.selectedOptions[0]?.textContent||'選択ボーン'}へ、次に塗る頂点を固定します。`));
 protectBrush.addEventListener('input',()=>protectBrushValue.textContent=`${Number(protectBrush.value).toFixed(1)}%`);
 clearProtectedButton.addEventListener('click',()=>{protectedVertices.clear();for(const entry of modelEntries)updateProtectedOverlay(entry);refreshProtectedBoneOptions();setStatus('部位ごとのウェイト指定をすべて消しました。');});
+weightPaintToggle.addEventListener('click',()=>setWeightPaintMode(!weightPaintMode));
+weightPaintUndo.addEventListener('click',undoWeightPaint);
+weightPaintRadius.addEventListener('input',()=>weightPaintRadiusValue.textContent=`${Number(weightPaintRadius.value).toFixed(1)}%`);
+weightPaintStrength.addEventListener('input',()=>weightPaintStrengthValue.textContent=`${Number(weightPaintStrength.value)}%`);
+weightPaintBone.addEventListener('change',()=>setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'ボーン'}のウェイトを塗る設定です。`));
 
 function positionInsideFromSurface(bone) {
   if(!bone.surfacePoint||!bone.surfaceNormal)return;
@@ -606,8 +721,15 @@ function positionInsideFromSurface(bone) {
   bone.position=localPoint(point);
 }
 
-renderer.domElement.addEventListener('pointerdown',event => { pointerStart={x:event.clientX,y:event.clientY,id:event.pointerId};lastPaintKey=null;lastPaintAt=0;if(protectMode)renderer.domElement.setPointerCapture(event.pointerId); });
+renderer.domElement.addEventListener('pointerdown',event => {
+  pointerStart={x:event.clientX,y:event.clientY,id:event.pointerId};lastPaintKey=null;lastPaintAt=0;
+  if(weightPaintMode){activeWeightStroke=new Map();renderer.domElement.setPointerCapture(event.pointerId);paintGeneratedWeights(event.clientX,event.clientY);return;}
+  if(protectMode)renderer.domElement.setPointerCapture(event.pointerId);
+});
 renderer.domElement.addEventListener('pointermove',event=>{
+  if(weightPaintMode&&pointerStart&&pointerStart.id===event.pointerId){
+    if(performance.now()-lastPaintAt<35)return;lastPaintAt=performance.now();paintGeneratedWeights(event.clientX,event.clientY);return;
+  }
   if(!protectMode||!pointerStart||pointerStart.id!==event.pointerId)return;
   if(performance.now()-lastPaintAt<40)return;
   lastPaintAt=performance.now();
@@ -619,6 +741,7 @@ renderer.domElement.addEventListener('pointerup',event => {
   if (!pointerStart || pointerStart.id !== event.pointerId) return;
   const distance=Math.hypot(event.clientX-pointerStart.x,event.clientY-pointerStart.y);
   pointerStart=null;
+  if(weightPaintMode){if(distance<=8)paintGeneratedWeights(event.clientX,event.clientY);finishWeightPaintStroke();return;}
   if(protectMode){if(distance<=8)paintProtectedSurface(event.clientX,event.clientY);return;}
   if(!placeMode)return;
   if (distance>8) return;
@@ -638,6 +761,11 @@ renderer.domElement.addEventListener('pointerup',event => {
   const label=boneByName(activeBoneName).label;
   setStatus(`${boneByName(BONE_DEFS[active].name).label}を表面から内側へ配置しました。深さはスライダーで調整できます。次は${label}を選択中です。`);
 });
+renderer.domElement.addEventListener('pointercancel',event=>{
+  if(!pointerStart||pointerStart.id!==event.pointerId)return;
+  if(weightPaintMode)finishWeightPaintStroke();
+  pointerStart=null;
+});
 
 boneDepth.addEventListener('input',()=>{
   boneDepthValue.textContent=`${Number(boneDepth.value)}%`;
@@ -647,10 +775,11 @@ boneDepth.addEventListener('input',()=>{
 
 placeButton.addEventListener('click',()=>{
   placeMode=!placeMode;
+  if(placeMode&&weightPaintMode)setWeightPaintMode(false);
   if(placeMode&&protectMode)setProtectMode(false);
   placeButton.textContent=`位置を置く：${placeMode?'ON':'OFF'}`;
   placeButton.style.background=placeMode?'#176b75':'';
-  controls.enabled=!placeMode;
+  controls.enabled=!placeMode&&!protectMode&&!weightPaintMode;
   viewHelp.textContent=placeMode?'選択中の関節の中心をモデル表面でタップ。配置後は次の未配置関節へ進みます。':'ドラッグで視点を回転できます。';
 });
 autoButton.addEventListener('click',()=>{
@@ -976,6 +1105,8 @@ async function generateRigAndWeights(){
   if(missing.length){activeBoneName=missing[0].name;renderBoneList();setStatus(`未配置の関節があります。${missing[0].label}から配置してください。`);return;}
   if(generateButton.disabled)return;
   generateButton.disabled=true;
+  if(weightPaintMode)setWeightPaintMode(false);
+  weightPaintUndoStack=[];activeWeightStroke=null;refreshWeightPaintControls();
   if(placeMode){placeMode=false;placeButton.textContent='位置を置く：OFF';controls.enabled=true;}
   setProtectMode(false);
   setStatus('ボーンとウェイトを生成しています…');
@@ -1019,12 +1150,13 @@ async function generateRigAndWeights(){
     modelRoot.updateMatrixWorld(true);
     const unifiedSeams=weighting.unifyAdjacentMeshSeamWeights(modelEntries,BONE_DEFS.length,rootSize);
     exportButton.disabled=false;
+    refreshWeightPaintControls();
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
     const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
     const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個はメモリ保護のため表面平滑化を省きました。`:'';
     setStatus(`リギングを生成しました。腕・袖パーツ${armSurfaceComponentCount}個を判定し、足先${footRegionVertexCount.toLocaleString()}頂点を足首ボーンへ割り当てました。隣接メッシュの継ぎ目${unifiedSeams}か所のウェイトを揃え、部位指定した${assignedCount.toLocaleString()}頂点を優先しました。${phoneNote}足首を動かして確認してからGLBを保存してください。`);
   }catch(error){
-    console.error(error);setStatus(`生成に失敗しました: ${error.message||error}`);
+    console.error(error);refreshWeightPaintControls();setStatus(`生成に失敗しました: ${error.message||error}`);
   }finally{generateButton.disabled=false;}
 }
 generateButton.addEventListener('click',generateRigAndWeights);

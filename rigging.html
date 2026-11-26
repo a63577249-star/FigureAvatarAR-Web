@@ -99,6 +99,17 @@
         <button id="generate">ボーンとウェイトを生成</button>
         <button id="export" class="secondary" disabled>リギング済みGLBを保存</button>
         <p class="hint">通常部分は近いボーン区間から割り当て、メッシュ表面の角度とつながりに沿ってウェイトを拡散します。袖は腕に近い部分から腕の影響を表面に沿って伝え、脚から離れたスカート裾は胴体側へ割り当てて脚へ引かれにくくします。足首より下の足先は足首ボーンへ割り当てます。BlenderのBone Heatに近い考え方ですが、同一の実装ではありません。部位指定は自動計算より優先します。</p>
+        <h2>生成後のウェイトを手で塗り直す</h2>
+        <label class="hint" for="weight-paint-bone">塗るボーン</label>
+        <select id="weight-paint-bone" disabled></select>
+        <div class="row">
+          <label class="hint" for="weight-paint-mode">操作<select id="weight-paint-mode"><option value="add">選択ボーンを強める</option><option value="erase">選択ボーンを弱める</option></select></label>
+          <label class="hint" for="weight-paint-strength">強さ <output id="weight-paint-strength-value">50%</output><input id="weight-paint-strength" type="range" min="10" max="100" value="50" step="5" disabled></label>
+        </div>
+        <label class="hint" for="weight-paint-radius">ブラシ半径 <output id="weight-paint-radius-value">2.0%</output></label>
+        <input id="weight-paint-radius" type="range" min="0.3" max="6" value="2" step="0.1" disabled>
+        <div class="row"><button id="weight-paint-toggle" class="secondary" disabled>ウェイトを塗る：OFF</button><button id="weight-paint-undo" class="secondary" disabled>直前の塗りを戻す</button></div>
+        <p class="hint">ウェイト生成後に使います。塗りたいボーンと操作を選び、モデル表面をドラッグしてください。ブラシは表面法線も見て、近くに重なった裏側の面へ届きにくくします。操作をOFFにすると視点を回せます。直前のストロークは取り消せます。</p>
       </section>
       <div id="status" role="status">モデルファイルを選択してください。</div>
     </aside>

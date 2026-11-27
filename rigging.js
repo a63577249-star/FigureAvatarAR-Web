@@ -169,7 +169,7 @@ function refreshWeightPaintControls(){
   for(const bone of BONE_DEFS){const option=document.createElement('option');option.value=bone.name;option.textContent=bone.label;weightPaintBone.append(option);}
   weightPaintBone.value=BONE_DEFS.some(bone=>bone.name===previous)?previous:(activeBoneName||BONE_DEFS[0]?.name||'');
   const ready=Boolean(generatedRig&&modelEntries.some(entry=>entry.generated));
-  weightPaintBone.disabled=!ready;weightPaintStrength.disabled=!ready;weightPaintRadius.disabled=!ready;
+  weightPaintBone.disabled=!ready;weightPaintStrength.disabled=!ready||weightPaintModeSelect.value==='remove';weightPaintRadius.disabled=!ready;
   weightPaintToggle.disabled=!ready;weightPaintUndo.disabled=!ready||weightPaintUndoStack.length===0;
 }
 renderBoneList();
@@ -632,23 +632,41 @@ function paintGeneratedWeights(clientX,clientY){
   const radius=Math.max(modelLocalBounds().getSize(new THREE.Vector3()).length()*Number(weightPaintRadius.value)/100,1e-5),radiusSq=radius*radius;
   const hitNormal=hit.face?hit.face.normal.clone().applyMatrix3(new THREE.Matrix3().getNormalMatrix(hit.object.matrixWorld)):new THREE.Vector3(0,0,1);
   hitNormal.applyMatrix3(new THREE.Matrix3().getNormalMatrix(modelRoot.matrixWorld.clone().invert())).normalize();
-  const strength=Number(weightPaintStrength.value)/100,addMode=weightPaintModeSelect.value==='add';
+  const strength=Number(weightPaintStrength.value)/100,paintOperation=weightPaintModeSelect.value;
   let changed=0;
   for(let vertex=0;vertex<positions.length/3;vertex++){
     const dx=positions[vertex*3]-center.x,dy=positions[vertex*3+1]-center.y,dz=positions[vertex*3+2]-center.z,distanceSq=dx*dx+dy*dy+dz*dz;
     if(distanceSq>radiusSq)continue;
     if(normals&&normals[vertex*3]*hitNormal.x+normals[vertex*3+1]*hitNormal.y+normals[vertex*3+2]*hitNormal.z<0.15)continue;
-    const falloff=(1-Math.sqrt(distanceSq)/radius)**2,amount=strength*falloff;if(amount<0.005)continue;
+    const falloff=(1-Math.sqrt(distanceSq)/radius)**2,amount=strength*falloff;if(paintOperation!=='remove'&&amount<0.005)continue;
     const offset=vertex*4,values=new Map();
     for(let slot=0;slot<4;slot++){const id=index.array[offset+slot],value=weight.array[offset+slot];if(value>1e-7)values.set(id,(values.get(id)||0)+value);}
     const old=values.get(boneIndex)||0;
-    if(!addMode&&old<=1e-7)continue;
-    if(addMode){
+    if(paintOperation!=='add'&&old<=1e-7)continue;
+    if(paintOperation==='add'){
       const next=old+(1-old)*amount;
       if(!values.has(boneIndex)&&values.size>=4){const weakest=[...values].sort((a,b)=>a[1]-b[1])[0];if(weakest[1]>=next)continue;values.delete(weakest[0]);}
       const remaining=[...values].filter(([id])=>id!==boneIndex),remainingSum=remaining.reduce((sum,item)=>sum+item[1],0);
       values.set(boneIndex,next);const scale=remainingSum>1e-8?(1-next)/remainingSum:0;
       for(const [id,value] of remaining)values.set(id,value*scale);
+    }else if(paintOperation==='remove'){
+      values.delete(boneIndex);
+      const remaining=[...values],remainingSum=remaining.reduce((sum,item)=>sum+item[1],0);
+      if(remainingSum>1e-8){for(const [id,value] of remaining)values.set(id,value/remainingSum);}
+      else{
+        const parentName=BONE_DEFS[boneIndex].parent;
+        let fallbackIndex=parentName?BONE_DEFS.findIndex(bone=>bone.name===parentName):-1;
+        if(fallbackIndex<0||fallbackIndex===boneIndex){
+          const pointX=positions[vertex*3],pointY=positions[vertex*3+1],pointZ=positions[vertex*3+2];let nearest=Infinity;
+          for(let candidate=0;candidate<BONE_DEFS.length;candidate++){
+            if(candidate===boneIndex||!BONE_DEFS[candidate].position)continue;
+            const joint=BONE_DEFS[candidate].position,dx=joint.x-pointX,dy=joint.y-pointY,dz=joint.z-pointZ,distance=dx*dx+dy*dy+dz*dz;
+            if(distance<nearest){nearest=distance;fallbackIndex=candidate;}
+          }
+        }
+        if(fallbackIndex<0)continue;
+        values.set(fallbackIndex,1);
+      }
     }else{
       const next=old*(1-amount),removed=old-next;values.set(boneIndex,next);
       const remaining=[...values].filter(([id])=>id!==boneIndex),remainingSum=remaining.reduce((sum,item)=>sum+item[1],0);
@@ -755,6 +773,7 @@ protectBrush.addEventListener('input',()=>protectBrushValue.textContent=`${Numbe
 clearProtectedButton.addEventListener('click',()=>{protectedVertices.clear();for(const entry of modelEntries)updateProtectedOverlay(entry);refreshProtectedBoneOptions();setStatus('部位ごとのウェイト指定をすべて消しました。');});
 weightPaintToggle.addEventListener('click',()=>setWeightPaintMode(!weightPaintMode));
 weightPaintUndo.addEventListener('click',undoWeightPaint);
+weightPaintModeSelect.addEventListener('change',refreshWeightPaintControls);
 weightPaintRadius.addEventListener('input',()=>weightPaintRadiusValue.textContent=`${Number(weightPaintRadius.value).toFixed(1)}%`);
 weightPaintStrength.addEventListener('input',()=>weightPaintStrengthValue.textContent=`${Number(weightPaintStrength.value)}%`);
 weightPaintBone.addEventListener('change',()=>{refreshWeightPaintOverlay();setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'ボーン'}のウェイトを塗る設定です。`);});

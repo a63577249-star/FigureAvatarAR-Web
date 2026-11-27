@@ -100,16 +100,16 @@
         <button id="export" class="secondary" disabled>リギング済みGLBを保存</button>
         <p class="hint">通常部分は近いボーン区間から割り当て、メッシュ表面の角度とつながりに沿ってウェイトを拡散します。袖は腕に近い部分から腕の影響を表面に沿って伝え、脚から離れたスカート裾は胴体側へ割り当てて脚へ引かれにくくします。足首より下の足先は足首ボーンへ割り当てます。BlenderのBone Heatに近い考え方ですが、同一の実装ではありません。部位指定は自動計算より優先します。</p>
         <h2>生成後のウェイトを手で塗り直す</h2>
-        <label class="hint" for="weight-paint-bone">塗るボーン</label>
+        <label class="hint" for="weight-paint-bone">塗り直す部位（ボーン）</label>
         <select id="weight-paint-bone" disabled></select>
         <div class="row">
-          <label class="hint" for="weight-paint-mode">操作<select id="weight-paint-mode"><option value="add">選択ボーンを強める</option><option value="erase">選択ボーンを弱める</option><option value="remove">選択ボーンの影響を完全に外す</option></select></label>
+          <label class="hint" for="weight-paint-mode">塗り方<select id="weight-paint-mode"><option value="add">このボーンの影響を増やす</option><option value="erase">このボーンの影響を減らす</option><option value="remove">この範囲から完全に外す（他へ再配分）</option></select></label>
           <label class="hint" for="weight-paint-strength">強さ <output id="weight-paint-strength-value">50%</output><input id="weight-paint-strength" type="range" min="10" max="100" value="50" step="5" disabled></label>
         </div>
         <label class="hint" for="weight-paint-radius">ブラシ半径 <output id="weight-paint-radius-value">2.0%</output></label>
         <input id="weight-paint-radius" type="range" min="0.3" max="6" value="2" step="0.1" disabled>
         <div class="row"><button id="weight-paint-toggle" class="secondary" disabled>ウェイトを塗る：OFF</button><button id="weight-paint-undo" class="secondary" disabled>直前の塗りを戻す</button></div>
-        <p class="hint">色の見方：橙色は選択ボーンの現在の影響、青色は塗り直した範囲です。「影響を完全に外す」はブラシ内の選択ボーンのウェイトを0にして、残りを他ボーンへ振り分けます。ウェイト生成後にボーンと操作を選び、「ウェイトを塗る」をONにしてモデル表面をドラッグしてください。操作をOFFにすると視点を回せます。直前のストロークは取り消せます。</p>
+        <p class="hint">塗りはボーンごとに分かれています。選択中のボーンだけを表示し、別のボーンへ切り替えると前の塗り表示は隠れます。色の見方：橙色は現在の影響、青色は選択中のボーンで塗った範囲です。「影響を減らす」は強さに応じて他のボーンへ分配します。「完全に外す」はブラシ内で選択ボーンのウェイトを0にし、残りを他へ再配分します。ウェイト生成後に対象部位と塗り方を選び、「ウェイトを塗る」をONにしてモデル表面をドラッグしてください。「直前の塗りを戻す」は最後に行った塗り操作を取り消します。</p>
       </section>
       <div id="status" role="status">モデルファイルを選択してください。</div>
     </aside>

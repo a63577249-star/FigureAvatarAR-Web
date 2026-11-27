@@ -617,7 +617,7 @@ function paintProtectedSurface(clientX,clientY) {
 
 function captureWeightStrokeVertex(entry,vertex){
   if(!activeWeightStroke)return;
-  let vertices=activeWeightStroke.get(entry);if(!vertices){vertices=new Map();activeWeightStroke.set(entry,vertices);}
+  let vertices=activeWeightStroke.vertices.get(entry);if(!vertices){vertices=new Map();activeWeightStroke.vertices.set(entry,vertices);}
   if(vertices.has(vertex))return;
   const index=entry.generated.geometry.getAttribute('skinIndex'),weight=entry.generated.geometry.getAttribute('skinWeight'),offset=vertex*4;
   vertices.set(vertex,{indices:Array.from(index.array.subarray(offset,offset+4)),weights:Array.from(weight.array.subarray(offset,offset+4))});
@@ -689,7 +689,11 @@ function refreshWeightPaintOverlay(){
   modelRoot.updateMatrixWorld(true);
   const selectedBone=BONE_DEFS.findIndex(bone=>bone.name===weightPaintBone.value);if(selectedBone<0)return;
   const repainted=new Map();
-  const includeStroke=stroke=>{for(const [entry,vertices] of stroke||[]){let set=repainted.get(entry);if(!set){set=new Set();repainted.set(entry,set);}for(const vertex of vertices.keys())set.add(vertex);}};
+  const selectedBoneName=weightPaintBone.value;
+  const includeStroke=stroke=>{
+    if(!stroke||stroke.boneName!==selectedBoneName)return;
+    for(const [entry,vertices] of stroke.vertices){let set=repainted.get(entry);if(!set){set=new Set();repainted.set(entry,set);}for(const vertex of vertices.keys())set.add(vertex);}
+  };
   for(const stroke of weightPaintUndoStack)includeStroke(stroke);
   includeStroke(activeWeightStroke);
   const diagonal=modelLocalBounds().getSize(new THREE.Vector3()).length();
@@ -736,9 +740,9 @@ function setWeightPaintMode(enabled){
 }
 
 function finishWeightPaintStroke(){
-  if(activeWeightStroke?.size){
+  if(activeWeightStroke?.vertices.size){
     weightPaintUndoStack.push(activeWeightStroke);if(weightPaintUndoStack.length>12)weightPaintUndoStack.shift();
-    let count=0;for(const vertices of activeWeightStroke.values())count+=vertices.size;
+    let count=0;for(const vertices of activeWeightStroke.vertices.values())count+=vertices.size;
     setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'選択ボーン'}のウェイトを${count.toLocaleString()}頂点塗り直しました。必要なら直前の塗りを戻せます。`);
   }
   activeWeightStroke=null;refreshWeightPaintControls();refreshWeightPaintOverlay();
@@ -746,13 +750,13 @@ function finishWeightPaintStroke(){
 
 function undoWeightPaint(){
   const stroke=weightPaintUndoStack.pop();if(!stroke)return;
-  for(const [entry,vertices] of stroke){
+  for(const [entry,vertices] of stroke.vertices){
     if(!entry.generated)continue;
     const index=entry.generated.geometry.getAttribute('skinIndex'),weight=entry.generated.geometry.getAttribute('skinWeight');
     for(const [vertex,snapshot] of vertices){const offset=vertex*4;for(let slot=0;slot<4;slot++){index.array[offset+slot]=snapshot.indices[slot];weight.array[offset+slot]=snapshot.weights[slot];}}
     index.needsUpdate=true;weight.needsUpdate=true;entry.generated.computeBoundingSphere();
   }
-  refreshWeightPaintControls();refreshWeightPaintOverlay();setStatus('直前のウェイト塗りを元に戻しました。');
+  refreshWeightPaintControls();refreshWeightPaintOverlay();setStatus(`${boneByName(stroke.boneName)?.label||'ボーン'}の直前の塗りを戻しました。`);
 }
 
 function setProtectMode(enabled) {
@@ -776,7 +780,7 @@ weightPaintUndo.addEventListener('click',undoWeightPaint);
 weightPaintModeSelect.addEventListener('change',refreshWeightPaintControls);
 weightPaintRadius.addEventListener('input',()=>weightPaintRadiusValue.textContent=`${Number(weightPaintRadius.value).toFixed(1)}%`);
 weightPaintStrength.addEventListener('input',()=>weightPaintStrengthValue.textContent=`${Number(weightPaintStrength.value)}%`);
-weightPaintBone.addEventListener('change',()=>{refreshWeightPaintOverlay();setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'ボーン'}のウェイトを塗る設定です。`);});
+weightPaintBone.addEventListener('change',()=>{refreshWeightPaintControls();refreshWeightPaintOverlay();setStatus(`${weightPaintBone.selectedOptions[0]?.textContent||'ボーン'}を選択しました。橙色は現在の影響、青色はこのボーンで塗った範囲です。`);});
 
 function positionInsideFromSurface(bone) {
   if(!bone.surfacePoint||!bone.surfaceNormal)return;
@@ -788,7 +792,7 @@ function positionInsideFromSurface(bone) {
 
 renderer.domElement.addEventListener('pointerdown',event => {
   pointerStart={x:event.clientX,y:event.clientY,id:event.pointerId};lastPaintKey=null;lastPaintAt=0;
-  if(weightPaintMode){activeWeightStroke=new Map();renderer.domElement.setPointerCapture(event.pointerId);paintGeneratedWeights(event.clientX,event.clientY);return;}
+  if(weightPaintMode){activeWeightStroke={boneName:weightPaintBone.value,vertices:new Map()};renderer.domElement.setPointerCapture(event.pointerId);paintGeneratedWeights(event.clientX,event.clientY);return;}
   if(protectMode)renderer.domElement.setPointerCapture(event.pointerId);
 });
 renderer.domElement.addEventListener('pointermove',event=>{

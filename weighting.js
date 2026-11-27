@@ -142,7 +142,8 @@ async function extendArmWeightsOverSurface(dense,allowedInfluences,graph,armSurf
     while(heap.length){
       const [distance,vertex]=pop();
       if(distance!==distances[vertex]||distance>maxDistance)continue;
-      for(const neighbor of graph.neighbors[vertex]){
+      for(let edge=graph.offsets[vertex];edge<graph.offsets[vertex+1];edge++){
+        const neighbor=graph.neighbors[edge];
         if(!corridor[neighbor])continue;
         const dx=rootVertices[vertex*3]-rootVertices[neighbor*3];
         const dy=rootVertices[vertex*3+1]-rootVertices[neighbor*3+1];
@@ -230,7 +231,12 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     const reach=Math.max(rootSize*0.07,Math.sqrt(segment.lengthSq)*0.35);
     return ox*ox+oy*oy+oz*oz<=reach*reach;
   };
-  const lightweightPhoneMode=window.matchMedia('(max-width:760px)').matches&&count>60000;
+  // The surface graph now uses compact typed adjacency buffers, so phones can
+  // keep topology-aware weights for ordinary meshes without the old Map-heavy
+  // memory spike. Retain the fallback only for exceptionally dense meshes.
+  const phoneViewport=window.matchMedia('(max-width:760px)').matches;
+  const lightweightPhoneMode=phoneViewport&&count>160000;
+  const skipCoincidentGroups=phoneViewport&&count>60000;
   if(!lightweightPhoneMode)setStatus('独立した袖や服のパーツを確認しています…');
   const diffusionGraph=lightweightPhoneMode?null:await makeSurfaceDiffusionGraph(geometry,rootVertices,count);
   const armSurfaceComponents=diffusionGraph?classifyArmSurfaceComponents(diffusionGraph,segmentData,rootVertices,modelBounds,rootSize):null;
@@ -336,20 +342,20 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
 
   // Only weld coincident vertices when their surface normals agree. This
   // keeps separate garment layers and sharp seams from sharing bone weights.
-  const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize,entry.rootNormals);
+  const groups=skipCoincidentGroups?[]:coincidentVertexGroups(rootVertices,rootSize,entry.rootNormals);
   await extendArmWeightsOverSurface(dense,allowedInfluences,diffusionGraph,armSurfaceComponents,groups,segmentData,rootVertices,rootSize,count,boneCount);
   let next=new Float32Array(dense.length);
   const diffusionIterations=count<20000?10:count<80000?8:6;
   for(let iteration=0;diffusionGraph&&iteration<diffusionIterations;iteration++){
     for(let v=0;v<count;v++){
       if(v>0&&v%8192===0)await new Promise(resolve=>requestAnimationFrame(resolve));
-      const offset=v*boneCount,neighbors=diffusionGraph.neighbors[v],neighborWeights=diffusionGraph.weights[v];
-      if(!neighbors.length){next.set(dense.subarray(offset,offset+boneCount),offset);continue;}
+      const offset=v*boneCount,edgeStart=diffusionGraph.offsets[v],edgeEnd=diffusionGraph.offsets[v+1];
+      if(edgeStart===edgeEnd){next.set(dense.subarray(offset,offset+boneCount),offset);continue;}
       const self=.55,neighborMix=.45;
       for(let b=0;b<boneCount;b++){
         if(!allowedInfluences[offset+b]){next[offset+b]=0;continue;}
         let value=dense[offset+b]*self;
-        for(let n=0;n<neighbors.length;n++)value+=dense[neighbors[n]*boneCount+b]*neighborWeights[n]*neighborMix;
+        for(let edge=edgeStart;edge<edgeEnd;edge++)value+=dense[diffusionGraph.neighbors[edge]*boneCount+b]*diffusionGraph.weights[edge]*neighborMix;
         next[offset+b]=value;
       }
       normalizeAllowedWeights(next,offset,offset,boneCount,allowedInfluences,fallbackBones[v]);

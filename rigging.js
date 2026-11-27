@@ -860,7 +860,6 @@ autoButton.addEventListener('click',()=>{
 fileInput.addEventListener('change',event=>loadModel(Array.from(event.target.files||[])));
 
 async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
-  const rows=new Array(vertexCount);
   let surfaceNormals=geometry.attributes.normal;
   if(!surfaceNormals){geometry.computeVertexNormals();surfaceNormals=geometry.attributes.normal;}
   const normalValues=surfaceNormals?new Float32Array(vertexCount*3):null;
@@ -881,17 +880,22 @@ async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
     // diffusion across sharp creases such as sleeve/body and garment seams.
     return 0.08+0.92*THREE.MathUtils.clamp((alignment-0.15)/0.75,0,1);
   };
-  for(let v=0;v<vertexCount;v++){
-    rows[v]=new Map();
-    if(v>0&&v%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
-  }
   const index=geometry.index?.array;
   const count=index?index.length:vertexCount;
   const at=i=>index?index[i]:i;
+  const edgeCounts=new Uint32Array(vertexCount);
+  for(let i=0;i+2<count;i+=3){
+    const a=at(i),b=at(i+1),c=at(i+2);
+    if(a===b||b===c||c===a)continue;
+    edgeCounts[a]+=2;edgeCounts[b]+=2;edgeCounts[c]+=2;
+    if(i>0&&i%49152===0)await new Promise(resolve=>requestAnimationFrame(resolve));
+  }
+  const offsets=new Uint32Array(vertexCount+1);
+  for(let vertex=0;vertex<vertexCount;vertex++)offsets[vertex+1]=offsets[vertex]+edgeCounts[vertex];
+  const neighbors=new Uint32Array(offsets[vertexCount]),weights=new Float32Array(neighbors.length),cursor=offsets.slice(0,vertexCount);
   const add=(a,b,weight)=>{
     if(a===b||!Number.isFinite(weight)||weight<=0)return;
-    const crease=creaseFactor(a,b),adjusted=weight*crease;
-    rows[a].set(b,(rows[a].get(b)||0)+adjusted);
+    const edge=cursor[a]++;neighbors[edge]=b;weights[edge]=weight*creaseFactor(a,b);
   };
   const cotangent=(ax,ay,az,bx,by,bz,cx,cy,cz)=>{
     const ux=ax-cx,uy=ay-cy,uz=az-cz,vx=bx-cx,vy=by-cy,vz=bz-cz;
@@ -919,15 +923,9 @@ async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
       await new Promise(resolve=>requestAnimationFrame(resolve));
     }
   }
-  const neighbors=new Array(vertexCount),weights=new Array(vertexCount);
   for(let v=0;v<vertexCount;v++){
-    const row=rows[v];
-    if(!row.size){neighbors[v]=[];weights[v]=new Float32Array(0);continue;}
-    let total=0;for(const value of row.values())total+=value;
-    const ids=Array.from(row.keys()),normalized=new Float32Array(ids.length);
-    if(total<=1e-12)normalized.fill(1/ids.length);
-    else for(let i=0;i<ids.length;i++)normalized[i]=row.get(ids[i])/total;
-    neighbors[v]=ids;weights[v]=normalized;
+    let total=0;for(let edge=offsets[v];edge<offsets[v+1];edge++)total+=weights[edge];
+    if(total>1e-12)for(let edge=offsets[v];edge<offsets[v+1];edge++)weights[edge]/=total;
     if(v>0&&v%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
   }
   const componentIds=new Int32Array(vertexCount);componentIds.fill(-1);
@@ -939,12 +937,14 @@ async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
     queue[tail++]=start;componentIds[start]=componentCount;
     while(head<tail){
       const vertex=queue[head++];sx+=positions[vertex*3];sy+=positions[vertex*3+1];sz+=positions[vertex*3+2];
-      for(const neighbor of neighbors[vertex])if(componentIds[neighbor]<0){componentIds[neighbor]=componentCount;queue[tail++]=neighbor;}
+      for(let edge=offsets[vertex];edge<offsets[vertex+1];edge++){
+        const neighbor=neighbors[edge];if(componentIds[neighbor]<0){componentIds[neighbor]=componentCount;queue[tail++]=neighbor;}
+      }
       if(++visited%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
     }
     componentCenters.push(new THREE.Vector3(sx/tail,sy/tail,sz/tail));componentCount++;
   }
-  return {neighbors,weights,componentIds,componentCenters};
+  return {offsets,neighbors,weights,componentIds,componentCenters};
 }
 
 function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
@@ -1254,7 +1254,7 @@ async function generateRigAndWeights(){
     refreshWeightPaintControls();
     refreshWeightPaintOverlay();
     const assignedCount=[...protectedVertices.values()].reduce((sum,map)=>sum+map.size,0);
-    const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>60000).length;
+    const phoneLiteMeshes=modelEntries.filter(entry=>window.matchMedia('(max-width:760px)').matches&&entry.geometry.attributes.position.count>160000).length;
     const phoneNote=phoneLiteMeshes?` スマホ向けに高密度Mesh ${phoneLiteMeshes}個はメモリ保護のため表面平滑化を省きました。`:'';
     setStatus(`リギングを生成しました。腕・袖パーツ${armSurfaceComponentCount}個を判定し、足先${footRegionVertexCount.toLocaleString()}頂点を足首ボーンへ割り当てました。隣接メッシュの継ぎ目${unifiedSeams}か所のウェイトを揃え、部位指定した${assignedCount.toLocaleString()}頂点を優先しました。${phoneNote}足首を動かして確認してからGLBを保存してください。`);
   }catch(error){

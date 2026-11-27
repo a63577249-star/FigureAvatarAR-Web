@@ -6,7 +6,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-arm-arrow-tips-20261126';
-import { createWeightingTools } from './weighting.js?v=weighting-final-shoulder-patch-lowerbody-guard-20261126k';
+import { createWeightingTools } from './weighting.js?v=weighting-crease-aware-surface-20261127';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
@@ -332,6 +332,7 @@ async function loadModel(files) {
     for(const entry of modelEntries){
       const meshToRoot=inverseRoot.clone().multiply(entry.mesh.matrixWorld);
       const normalToRoot=new THREE.Matrix3().getNormalMatrix(meshToRoot);
+      if(!entry.geometry.attributes.normal)entry.geometry.computeVertexNormals();
       const sourcePositions=entry.geometry.attributes.position,sourceNormals=entry.geometry.attributes.normal;
       entry.rootPositions=new Float32Array(sourcePositions.count*3);
       entry.rootNormals=sourceNormals?new Float32Array(sourceNormals.count*3):null;
@@ -860,6 +861,26 @@ fileInput.addEventListener('change',event=>loadModel(Array.from(event.target.fil
 
 async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
   const rows=new Array(vertexCount);
+  let surfaceNormals=geometry.attributes.normal;
+  if(!surfaceNormals){geometry.computeVertexNormals();surfaceNormals=geometry.attributes.normal;}
+  const normalValues=surfaceNormals?new Float32Array(vertexCount*3):null;
+  if(normalValues){
+    for(let vertex=0;vertex<vertexCount;vertex++){
+      normalValues[vertex*3]=surfaceNormals.getX(vertex);
+      normalValues[vertex*3+1]=surfaceNormals.getY(vertex);
+      normalValues[vertex*3+2]=surfaceNormals.getZ(vertex);
+      if(vertex>0&&vertex%16384===0)await new Promise(resolve=>requestAnimationFrame(resolve));
+    }
+  }
+  const creaseFactor=(a,b)=>{
+    if(!normalValues)return 1;
+    const alignment=THREE.MathUtils.clamp(
+      normalValues[a*3]*normalValues[b*3]+normalValues[a*3+1]*normalValues[b*3+1]+normalValues[a*3+2]*normalValues[b*3+2],-1,1
+    );
+    // Let weights smooth freely over a gently curved surface, but reduce
+    // diffusion across sharp creases such as sleeve/body and garment seams.
+    return 0.08+0.92*THREE.MathUtils.clamp((alignment-0.15)/0.75,0,1);
+  };
   for(let v=0;v<vertexCount;v++){
     rows[v]=new Map();
     if(v>0&&v%4096===0)await new Promise(resolve=>requestAnimationFrame(resolve));
@@ -869,7 +890,8 @@ async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
   const at=i=>index?index[i]:i;
   const add=(a,b,weight)=>{
     if(a===b||!Number.isFinite(weight)||weight<=0)return;
-    rows[a].set(b,(rows[a].get(b)||0)+weight);
+    const crease=creaseFactor(a,b),adjusted=weight*crease;
+    rows[a].set(b,(rows[a].get(b)||0)+adjusted);
   };
   const cotangent=(ax,ay,az,bx,by,bz,cx,cy,cz)=>{
     const ux=ax-cx,uy=ay-cy,uz=az-cz,vx=bx-cx,vy=by-cy,vz=bz-cz;
@@ -956,9 +978,9 @@ function classifyArmSurfaceComponents(graph,segments,positions,bounds,rootSize){
   return flags;
 }
 
-function coincidentVertexGroups(positions, scale) {
+function coincidentVertexGroups(positions, scale, normals=null) {
   const vertexCount=positions.length/3,tolerance=Math.max(1e-6,scale*1e-5), toleranceSq=tolerance*tolerance;
-  const cells=new Map(), parent=Array.from({length:vertexCount},(_,i)=>i);
+  const cells=new Map(),parent=new Int32Array(vertexCount);for(let i=0;i<vertexCount;i++)parent[i]=i;
   const root=i=>{while(parent[i]!==i){parent[i]=parent[parent[i]];i=parent[i];}return i;};
   const key=(x,y,z)=>`${x},${y},${z}`;
   for(let i=0;i<vertexCount;i++){
@@ -966,7 +988,15 @@ function coincidentVertexGroups(positions, scale) {
     const cx=Math.floor(px/tolerance),cy=Math.floor(py/tolerance),cz=Math.floor(pz/tolerance);
     for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)for(let z=-1;z<=1;z++){
       const list=cells.get(key(cx+x,cy+y,cz+z));if(!list)continue;
-      for(const j of list){const dx=px-positions[j*3],dy=py-positions[j*3+1],dz=pz-positions[j*3+2];if(dx*dx+dy*dy+dz*dz<=toleranceSq){let a=root(i),b=root(j);if(a!==b)parent[Math.max(a,b)]=Math.min(a,b);}}
+      for(const j of list){
+        const dx=px-positions[j*3],dy=py-positions[j*3+1],dz=pz-positions[j*3+2];
+        if(dx*dx+dy*dy+dz*dz>toleranceSq)continue;
+        if(normals){
+          const dot=normals[i*3]*normals[j*3]+normals[i*3+1]*normals[j*3+1]+normals[i*3+2]*normals[j*3+2];
+          if(dot<0.15)continue;
+        }
+        let a=root(i),b=root(j);if(a!==b)parent[Math.max(a,b)]=Math.min(a,b);
+      }
     }
     const k=key(cx,cy,cz);if(!cells.has(k))cells.set(k,[]);cells.get(k).push(i);
   }

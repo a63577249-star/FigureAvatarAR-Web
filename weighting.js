@@ -334,10 +334,13 @@ async function generateMeshWeights(entry,bonesByName,rootSize){
     normalizeWeights(dense,offset,boneCount);
   }
 
-  const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize);
+  // Only weld coincident vertices when their surface normals agree. This
+  // keeps separate garment layers and sharp seams from sharing bone weights.
+  const groups=lightweightPhoneMode?[]:coincidentVertexGroups(rootVertices,rootSize,entry.rootNormals);
   await extendArmWeightsOverSurface(dense,allowedInfluences,diffusionGraph,armSurfaceComponents,groups,segmentData,rootVertices,rootSize,count,boneCount);
   let next=new Float32Array(dense.length);
-  for(let iteration=0;diffusionGraph&&iteration<6;iteration++){
+  const diffusionIterations=count<20000?10:count<80000?8:6;
+  for(let iteration=0;diffusionGraph&&iteration<diffusionIterations;iteration++){
     for(let v=0;v<count;v++){
       if(v>0&&v%8192===0)await new Promise(resolve=>requestAnimationFrame(resolve));
       const offset=v*boneCount,neighbors=diffusionGraph.neighbors[v],neighborWeights=diffusionGraph.weights[v];
@@ -490,7 +493,16 @@ function unifyAdjacentMeshSeamWeights(entries,boneCount,rootSize){
         const other=refs[otherIndex];if(other.entryIndex===ref.entryIndex)continue;
         const otherPositions=entries[other.entryIndex].rootPositions,otherOffset=other.vertex*3;
         const dx=px-otherPositions[otherOffset],dy=py-otherPositions[otherOffset+1],dz=pz-otherPositions[otherOffset+2];
-        if(dx*dx+dy*dy+dz*dz<=toleranceSq)join(refIndex,otherIndex);
+        if(dx*dx+dy*dy+dz*dz>toleranceSq)continue;
+        const normalsA=entry.rootNormals,normalsB=entries[other.entryIndex].rootNormals;
+        if(normalsA&&normalsB){
+          const normalOffset=ref.vertex*3,otherNormalOffset=other.vertex*3;
+          const alignment=normalsA[normalOffset]*normalsB[otherNormalOffset]
+            +normalsA[normalOffset+1]*normalsB[otherNormalOffset+1]
+            +normalsA[normalOffset+2]*normalsB[otherNormalOffset+2];
+          if(alignment<0.15)continue;
+        }
+        join(refIndex,otherIndex);
       }
     }
     const cell=key(cx,cy,cz);if(!cells.has(cell))cells.set(cell,[]);cells.get(cell).push(refIndex);

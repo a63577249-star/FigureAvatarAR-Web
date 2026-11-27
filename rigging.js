@@ -907,6 +907,9 @@ async function makeSurfaceDiffusionGraph(geometry, positions, vertexCount) {
   const stableCotangent=(...points)=>cotangent(...points)+0.001;
   for(let i=0;i+2<count;i+=3){
     const a=at(i),b=at(i+1),c=at(i+2);
+    // Match the first counting pass exactly; degenerate faces contribute no
+    // slots to the compact adjacency buffers.
+    if(a===b||b===c||c===a)continue;
     const ax=positions[a*3],ay=positions[a*3+1],az=positions[a*3+2];
     const bx=positions[b*3],by=positions[b*3+1],bz=positions[b*3+2];
     const cx=positions[c*3],cy=positions[c*3+1],cz=positions[c*3+2];

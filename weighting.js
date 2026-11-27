@@ -490,7 +490,7 @@ function unifyAdjacentMeshSeamWeights(entries,boneCount,rootSize){
   const join=(a,b)=>{const ra=root(a),rb=root(b);if(ra!==rb)parent[Math.max(ra,rb)]=Math.min(ra,rb);};
   const cells=new Map(),key=(x,y,z)=>`${x},${y},${z}`;
   for(let refIndex=0;refIndex<refs.length;refIndex++){
-    const ref=refs[refIndex],positions=entries[ref.entryIndex].rootPositions,offset=ref.vertex*3;
+    const ref=refs[refIndex],entry=entries[ref.entryIndex],positions=entry.rootPositions,offset=ref.vertex*3;
     const px=positions[offset],py=positions[offset+1],pz=positions[offset+2];
     const cx=Math.floor(px/tolerance),cy=Math.floor(py/tolerance),cz=Math.floor(pz/tolerance);
     for(let x=-1;x<=1;x++)for(let y=-1;y<=1;y++)for(let z=-1;z<=1;z++){

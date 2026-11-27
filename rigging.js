@@ -6,7 +6,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { createAiSkeletonTools } from './ai-skeleton.js?v=ai-basic19-arm-arrow-tips-20261126';
-import { createWeightingTools } from './weighting.js?v=weighting-entry-scope-fix-20261127b';
+import { createWeightingTools } from './weighting.js?v=underarm-sleeve-weights-20261127';
 
 const BONE_DEFS = [
   ['hip','腰',null], ['supine','胴の付け根','hip'], ['chest','胸','supine'],
